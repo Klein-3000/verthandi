@@ -1,0 +1,202 @@
+/* 基础浅色主题。暗色主题后续单独成文件，由 apply_theme 切换。 */
+
+QWidget {
+    background: #f5f6f8;
+    color: #1f2328;
+    font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    font-size: 13px;
+}
+
+/* ---------- 侧边栏 ---------- */
+
+#Sidebar {
+    background: #ffffff;
+    border-right: 1px solid #e5e7eb;
+}
+
+#SidebarTitle {
+    font-size: 16px;
+    font-weight: 600;
+    padding: 4px 8px 12px 8px;
+    color: #111827;
+    background: transparent;
+}
+
+#NavButton {
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    text-align: left;
+    padding: 8px 10px;
+    color: #4b5563;
+}
+
+#NavButton:hover {
+    background: #f0f2f5;
+}
+
+#NavButton:checked {
+    background: #e6f0ff;
+    color: #1a56db;
+    font-weight: 600;
+}
+
+/* ---------- 页面通用 ---------- */
+
+#PageTitle {
+    font-size: 20px;
+    font-weight: 600;
+    background: transparent;
+}
+
+#MutedText {
+    color: #6b7280;
+    background: transparent;
+}
+
+#AboutName {
+    font-size: 18px;
+    font-weight: 600;
+    background: transparent;
+}
+
+/* ---------- 顶部栏 ---------- */
+
+#Toolbar {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+}
+
+#ToolbarButton {
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 6px 12px;
+    color: #111827;
+}
+
+#ToolbarButton:hover:enabled {
+    background: #e5e7eb;
+}
+
+#ToolbarButton:disabled {
+    color: #9ca3af;
+}
+
+#ModeBadge {
+    background: transparent;
+    padding: 4px 8px;
+    color: #374151;
+}
+
+#IconButton {
+    background: transparent;
+    border: none;
+    padding: 6px 8px;
+    color: #4b5563;
+}
+
+#IconButton:hover:enabled {
+    background: #f0f2f5;
+    border-radius: 6px;
+}
+
+#IconButton:disabled {
+    color: #c0c4cc;
+}
+
+/* ---------- 卡片 ---------- */
+
+#Card {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+}
+
+#CardTitle {
+    font-size: 14px;
+    font-weight: 600;
+    color: #111827;
+    background: transparent;
+}
+
+#StatusKey {
+    color: #6b7280;
+    background: transparent;
+}
+
+#StatusValue {
+    color: #111827;
+    background: transparent;
+}
+
+/* ---------- 日志 ---------- */
+
+#LogView {
+    background: #0f172a;
+    color: #cbd5e1;
+    border-radius: 6px;
+    padding: 10px;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 12px;
+}
+
+/* 日志区工具条 */
+
+QComboBox {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 3px 8px;
+    min-height: 22px;
+}
+
+QComboBox:hover {
+    border-color: #cbd5e1;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 18px;
+}
+
+/* 日志文本 */
+
+#LogView {
+    background: #0f172a;
+    color: #cbd5e1;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+    padding: 8px;
+    selection-background-color: #2563eb;
+}
+
+
+/* 启动/停止按钮状态色 */
+
+#ToolbarButton[variant="start"] {
+    background: #16a34a;
+    color: #ffffff;
+    border: 1px solid #15803d;
+}
+
+#ToolbarButton[variant="start"]:hover {
+    background: #15803d;
+}
+
+#ToolbarButton[variant="stop"] {
+    background: #dc2626;
+    color: #ffffff;
+    border: 1px solid #b91c1c;
+}
+
+#ToolbarButton[variant="stop"]:hover {
+    background: #b91c1c;
+}
+
+#ToolbarButton[variant="busy"] {
+    background: #e5e7eb;
+    color: #9ca3af;
+    border: 1px solid #e5e7eb;
+}

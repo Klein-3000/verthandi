@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.spec
+settings.json
+settings.json.bak
+logs/
+data/
+home/
+runtime/
+bin/
