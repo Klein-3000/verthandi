@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from app.core.hoshimi_finder import find_hoshimi_exe
 from app.core.log_bus import LogBus, LogSource
 from app.core.paths import Paths
 from app.core.settings import Settings
@@ -48,7 +49,7 @@ class PrepareProcess(QObject):
         if self.running:
             return False
 
-        exe = self._find_exe()
+        exe, _version, _auto = find_hoshimi_exe(self.paths, self.settings)
         if not exe.exists():
             self.failed_to_start.emit(f'找不到 hoshimi.exe：{exe}')
             return False
@@ -133,19 +134,3 @@ class PrepareProcess(QObject):
         self._kill_timer.stop()
         self._proc = None
         self.finished.emit(-1 if self._cancelled else code)
-
-    def _find_exe(self) -> Path:
-        bin_dir = self.paths.bin_dir(self.settings)
-        version = self.settings.server.version
-        if version:
-            return bin_dir / version / 'hoshimi.exe'
-        if bin_dir.exists():
-            candidates = sorted(
-                (d for d in bin_dir.iterdir()
-                 if d.is_dir() and (d / 'hoshimi.exe').exists()),
-                key=lambda d: d.name,
-                reverse=True,
-            )
-            if candidates:
-                return candidates[0] / 'hoshimi.exe'
-        return bin_dir / 'hoshimi.exe'

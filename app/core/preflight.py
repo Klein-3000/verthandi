@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.core.client_state import client_fingerprint
 from app.core.game_process import is_game_running
+from app.core.hoshimi_finder import find_hoshimi_exe  # 新增
 from app.core.paths import Paths
 from app.core.port_check import check_port
 from app.core.settings import Settings
@@ -59,7 +60,7 @@ def _check_client_exe(settings: Settings) -> CheckItem:
 
 
 def _check_hoshimi_exe(paths: Paths, settings: Settings) -> CheckItem:
-    exe = _find_hoshimi_exe(paths, settings)
+    exe, _version, _auto = find_hoshimi_exe(paths, settings)
     if not exe.exists():
         return CheckItem('hoshimi-exe', 'hoshimi 程序', False, Severity.ERROR,
                          f'找不到 hoshimi.exe：{exe}', '把 hoshimi 解压到 bin/<版本>/')
@@ -173,22 +174,3 @@ def _check_prepare_freshness(paths: Paths, settings: Settings) -> list[CheckItem
             return items
     items.append(CheckItem('prepare-fingerprint', '客户端指纹', True, Severity.WARNING))
     return items
-
-
-# ---------- 辅助 ----------
-
-def _find_hoshimi_exe(paths: Paths, settings: Settings) -> Path:
-    bin_dir = paths.bin_dir(settings)
-    version = settings.server.version
-    if version:
-        return bin_dir / version / 'hoshimi.exe'
-    if bin_dir.exists():
-        candidates = sorted(
-            (d for d in bin_dir.iterdir()
-             if d.is_dir() and (d / 'hoshimi.exe').exists()),
-            key=lambda d: d.name,
-            reverse=True,
-        )
-        if candidates:
-            return candidates[0] / 'hoshimi.exe'
-    return bin_dir / 'hoshimi.exe'

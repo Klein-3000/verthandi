@@ -95,7 +95,7 @@ class PathsConfig:
     home_dir: str = 'home'
     runtime_dir: str = 'runtime'
     logs_dir: str = 'logs'
-    client_switch_dir: str = 'data/client-switch'
+    client_switch_dir: str = 'home/data/client-switch'
 
     def to_dict(self) -> dict[str, Any]:
         return {

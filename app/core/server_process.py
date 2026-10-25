@@ -11,6 +11,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from app.core.hoshimi_finder import find_hoshimi_exe
 from app.core.log_bus import LogBus, LogSource
 from app.core.paths import Paths
 from app.core.settings import Settings
@@ -90,20 +91,8 @@ class ServerProcess(QObject):
     # ---------- 路径 ----------
 
     def hoshimi_exe(self) -> Path:
-        bin_dir = self.paths.bin_dir(self.settings)
-        version = self.settings.server.version
-        if version:
-            return bin_dir / version / 'hoshimi.exe'
-        if bin_dir.exists():
-            candidates = sorted(
-                (d for d in bin_dir.iterdir()
-                 if d.is_dir() and (d / 'hoshimi.exe').exists()),
-                key=lambda d: d.name,
-                reverse=True,
-            )
-            if candidates:
-                return candidates[0] / 'hoshimi.exe'
-        return bin_dir / 'hoshimi.exe'
+        exe, _version, _auto = find_hoshimi_exe(self.paths, self.settings)
+        return exe
 
     # ---------- version ----------
 

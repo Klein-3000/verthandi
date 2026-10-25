@@ -4,7 +4,8 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
@@ -17,6 +18,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.core.hoshimi_finder import find_hoshimi_exe
+from app.core.switch_client import SwitchError, SwitchOperation
 from app.core.client_state import ClientMode, client_fingerprint, read_client_mode
 from app.core.game_process import GameWatcher, is_game_running, launch_game
 from app.core.log_bus import LogBus, LogSource
@@ -107,15 +110,24 @@ class MainPage(QWidget):
         self.switch_btn = QPushButton('切换')
         self.switch_btn.setObjectName('ToolbarButton')
         self.switch_btn.setEnabled(False)
+        self.switch_btn.clicked.connect(self._on_switch_button)
         row.addWidget(self.switch_btn)
 
         row.addStretch(1)
 
-        for text in ('📂 日志', '🗄 data'):
-            btn = QPushButton(text)
-            btn.setObjectName('IconButton')
-            btn.setEnabled(False)
-            row.addWidget(btn)
+        row.addStretch(1)
+
+        self.logs_btn = QPushButton('📂 日志')
+        self.logs_btn.setObjectName('IconButton')
+        self.logs_btn.setToolTip('打开会话日志目录')
+        self.logs_btn.clicked.connect(self._on_open_logs)
+        row.addWidget(self.logs_btn)
+
+        self.data_btn = QPushButton('🗄 data')
+        self.data_btn.setObjectName('IconButton')
+        self.data_btn.setToolTip('打开 home/data 目录')
+        self.data_btn.clicked.connect(self._on_open_data)
+        row.addWidget(self.data_btn)
 
         self._apply_prepare_state()
         return bar
@@ -199,9 +211,23 @@ class MainPage(QWidget):
         box.setContentsMargins(16, 16, 16, 16)
         box.setSpacing(8)
 
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(8)
+
         title = QLabel('hoshimi 日志')
         title.setObjectName('CardTitle')
-        box.addWidget(title)
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+
+        self.gm_btn = QPushButton('🌐 GM 后台')
+        self.gm_btn.setObjectName('IconButton')
+        self.gm_btn.setToolTip('服务未运行')
+        self.gm_btn.setEnabled(False)
+        self.gm_btn.clicked.connect(self._on_open_gm)
+        title_row.addWidget(self.gm_btn)
+
+        box.addLayout(title_row)
 
         self.log_view = LogView(self.log_bus)
         box.addWidget(self.log_view, 1)
@@ -222,7 +248,14 @@ class MainPage(QWidget):
             ClientMode.UNKNOWN: 'Unknown',
         }.get(actual, 'Unknown')
 
-        version_text = s.server.version or '—'
+        exe, actual_version, auto_selected = find_hoshimi_exe(self.paths, s)
+        if actual_version:
+            if auto_selected:
+                version_text = f'{actual_version}（自动选择）'
+            else:
+                version_text = actual_version
+        else:
+            version_text = '—'
         home = self.paths.home_dir(s)
         runtime = self.paths.runtime_dir(s)
         ports_text = f'HTTP {s.server.http_port} / 游戏 {s.server.game_port}（TCP+UDP）'
@@ -248,14 +281,17 @@ class MainPage(QWidget):
             self.switch_btn.setText('切换到官服')
             self.switch_btn.setEnabled(True)
             self.switch_btn.setToolTip('')
+            self._set_btn_variant(self.switch_btn, 'switch')
         elif actual == ClientMode.OFFICIAL:
             self.switch_btn.setText('切换到本地')
             self.switch_btn.setEnabled(True)
             self.switch_btn.setToolTip('')
+            self._set_btn_variant(self.switch_btn, 'switch')
         else:
             self.switch_btn.setText('切换')
             self.switch_btn.setEnabled(False)
             self.switch_btn.setToolTip('无法读取客户端配置，请用官方启动器修复')
+            self._set_btn_variant(self.switch_btn, 'busy')
 
     def _refresh_runtime_state(self) -> None:
         sp_state = self.server_process.state
@@ -283,6 +319,13 @@ class MainPage(QWidget):
         self._repolish(lbl)
 
         self._apply_game_button_state()
+
+        if sp_state == ServerState.RUNNING:
+            self.gm_btn.setEnabled(True)
+            self.gm_btn.setToolTip('打开 GM 后台')
+        else:
+            self.gm_btn.setEnabled(False)
+            self.gm_btn.setToolTip('服务未运行')
 
     def _apply_game_button_state(self) -> None:
         if self.game_watcher.running:
@@ -713,6 +756,171 @@ class MainPage(QWidget):
             self.game_watcher.refresh()
         else:
             QMessageBox.critical(self, '无法启动游戏', msg)
+
+
+    # ---------- 快捷入口 ----------
+
+    def _open_directory(self, path: Path, label: str) -> None:
+        """打开目录；不存在时先创建。"""
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            QMessageBox.warning(
+                self, '无法打开目录',
+                f'{label}目录创建失败：\n{path}\n\n{e}',
+            )
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+            QMessageBox.warning(
+                self, '无法打开目录',
+                f'系统未能打开目录：\n{path}',
+            )
+
+    def _on_open_logs(self) -> None:
+        self._open_directory(
+            self.paths.logs_dir(self.settings), '日志'
+        )
+
+    def _on_open_data(self) -> None:
+        # home/data 是 hoshimi 的存档根目录
+        home = self.paths.home_dir(self.settings)
+        self._open_directory(home / 'data', 'data')
+
+    def _on_open_gm(self) -> None:
+        url = f'http://127.0.0.1:{self.settings.server.http_port}/gm/'
+        if not QDesktopServices.openUrl(QUrl(url)):
+            QMessageBox.warning(
+                self, '无法打开 GM 后台',
+                f'系统未能打开浏览器：\n{url}',
+            )
+
+    # ---------- 切换服务端 ----------
+
+    def _on_switch_button(self) -> None:
+        actual = read_client_mode(self.paths.active_client_dir(self.settings))
+        if actual == ClientMode.LOCAL:
+            target, target_label = 'Official', '官服'
+        elif actual == ClientMode.OFFICIAL:
+            target, target_label = 'Local', '本地服'
+        else:
+            return
+
+        if self.game_watcher.running:
+            QMessageBox.warning(
+                self, '无法切换',
+                '游戏正在运行，请先退出客户端再切换。'
+            )
+            return
+
+        op = self._build_switch_op()
+
+        # 前置检查
+        checks = op.preflight(target)
+        failures = [c for c in checks if not c.ok]
+        if failures:
+            self._show_switch_checks(failures, target_label)
+            return
+
+        # 二次确认
+        if not self._confirm_switch(target_label, checks):
+            return
+
+        # 执行
+        self._do_switch(op, target, target_label)
+
+    def _build_switch_op(self) -> SwitchOperation:
+        from pathlib import Path as _Path  # 避免顶部已用过的 Path 冲突
+        return SwitchOperation(
+            client_dir=self.paths.active_client_dir(self.settings),
+            state_dir=self.paths.client_switch_dir(self.settings),
+            prefs_dir=_Path.home() / 'AppData' / 'LocalLow' / 'yongshi' / 'AetherGazer',
+            hosts_path=_Path(
+                __import__('os').environ.get('SystemRoot', r'C:\Windows'),
+            ) / 'System32' / 'drivers' / 'etc' / 'hosts',
+            local_port=self.settings.server.http_port,
+            log_bus=self.log_bus,
+        )
+
+    def _show_switch_checks(self, failures: list, target_label: str) -> None:
+        lines = '\n'.join(f'• {c.label}：{c.message}' for c in failures)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle('无法切换到' + target_label)
+        box.setText('切换前置检查未通过：')
+        box.setInformativeText(lines)
+        box.setStandardButtons(QMessageBox.Ok)
+        box.exec()
+
+    def _confirm_switch(self, target_label: str, checks: list) -> bool:
+        # 服务在运行时给额外提示（不阻止）
+        extra = ''
+        if (self.server_process.state == ServerState.RUNNING
+                and target_label == '官服'):
+            extra = (
+                '\n注意：服务端仍在运行，切换后客户端不再连接本地服务。\n'
+                '如不再需要 GM 后台，建议切换后停止服务以释放端口。'
+            )
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle(f'切换到{target_label}')
+        box.setText(f'将把客户端切换到{target_label}。')
+        box.setInformativeText(
+            '会修改以下内容：\n'
+            '• 客户端 url.txt\n'
+            '• resources.assets 中的 SDK 端点\n'
+            '• 交换两套 SDK 登录缓存\n'
+            '• 清理 hosts 中的 ys4fun.com 回环映射（如有）\n'
+            f'{extra}\n\n'
+            '确定切换吗？'
+        )
+        switch_btn = box.addButton('确认切换', QMessageBox.AcceptRole)
+        box.addButton('取消', QMessageBox.RejectRole)
+        box.setDefaultButton(switch_btn)
+        box.exec()
+        return box.clickedButton() is switch_btn
+
+    def _do_switch(self, op: SwitchOperation, target: str, target_label: str) -> None:
+        from PySide6.QtWidgets import QProgressDialog
+        from PySide6.QtCore import Qt as _Qt
+        from PySide6.QtWidgets import QApplication as _QApp
+
+        progress = QProgressDialog('正在切换…', '', 0, 0, self)
+        progress.setWindowTitle(f'切换到{target_label}')
+        progress.setCancelButton(None)
+        progress.setWindowModality(_Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.show()
+
+        def on_progress(_stage: str, message: str) -> None:
+            progress.setLabelText(message)
+            _QApp.processEvents()
+
+        try:
+            result = op.switch(target, progress=on_progress)
+        except SwitchError as e:
+            progress.close()
+            if e.code == 'admin_required':
+                QMessageBox.critical(
+                    self, '需要管理员权限',
+                    'hosts 中有需要清理的回环映射，请以管理员身份重启 Verthandi 后重试。'
+                )
+            else:
+                QMessageBox.critical(self, '切换失败', e.message)
+            return
+
+        progress.close()
+        show_toast(self, f'已切换到{target_label}')
+        self.log_bus.emit_line(LogSource.APP, result.message, 'info')
+
+        # 刷新状态
+        self.refresh_status()
+
+        if result.needs_relogin:
+            QMessageBox.information(
+                self, f'已切换到{target_label}',
+                result.message + '\n\n如遇登录问题，请重新输入账号密码。'
+            )
 
     # ---------- preflight 对话框 ----------
 

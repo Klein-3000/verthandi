@@ -14,6 +14,7 @@ def detect_base_dir() -> Path:
 class Paths:
     """所有相对路径基于 base_dir 解析；绝对路径原样保留。"""
 
+
     def __init__(self, base_dir: Path | None = None):
         self.base_dir = (base_dir or detect_base_dir()).resolve()
 

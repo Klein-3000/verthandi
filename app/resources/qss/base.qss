@@ -91,19 +91,23 @@ QWidget {
 }
 
 #IconButton {
-    background: transparent;
-    border: none;
-    padding: 6px 8px;
-    color: #4b5563;
+    background: #eff6ff;
+    color: #1e40af;
+    border: 1px solid #bfdbfe;
+    border-radius: 6px;
+    padding: 5px 10px;
 }
 
 #IconButton:hover:enabled {
-    background: #f0f2f5;
-    border-radius: 6px;
+    background: #dbeafe;
+    color: #1e3a8a;
+    border-color: #93c5fd;
 }
 
 #IconButton:disabled {
-    color: #c0c4cc;
+    background: #f3f4f6;
+    color: #9ca3af;
+    border-color: #e5e7eb;
 }
 
 /* ---------- 卡片 ---------- */
@@ -321,4 +325,16 @@ QSpinBox::down-button {
     background: transparent;
     color: #92400e;
     font-size: 13px;
+}
+
+/* ---------- 切换按钮 ---------- */
+
+#ToolbarButton[variant="switch"] {
+    background: #2563eb;
+    color: #ffffff;
+    border: 1px solid #1d4ed8;
+}
+
+#ToolbarButton[variant="switch"]:hover {
+    background: #1d4ed8;
 }
