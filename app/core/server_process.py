@@ -47,10 +47,12 @@ class ServerProcess(QObject):
     """
 
     state_changed = Signal(str)          # ServerState.value
+    waiting_for_confirm = Signal()       # 需要用户手动确认
+    confirm_resolved = Signal()          # 确认完成（自动或手动）
     _stdout_line = Signal(str)           # 内部：reader 线程 → 主线程
     _process_exited = Signal(int)        # 内部：monitor 线程 → 主线程
 
-    FIRST_LAUNCH_HINTS = ('按回车继续', 'Press Enter', '按任意键继续')
+    FIRST_LAUNCH_HINTS = ('按回车', 'Press Enter', '按回车继续')
 
     def __init__(self, paths: Paths, settings: Settings, log_bus: LogBus):
         super().__init__()
@@ -190,7 +192,7 @@ class ServerProcess(QObject):
             self._proc = None
             return False
 
-        self._auto_confirm_pending = self.settings.behavior.auto_confirm_first_launch
+        self._auto_confirm_pending = True
         self._stop_phase = 0
         self._set_state(ServerState.STARTING)
 
@@ -235,16 +237,34 @@ class ServerProcess(QObject):
             self._maybe_auto_confirm()
 
     def _maybe_auto_confirm(self) -> None:
-        if not self._auto_confirm_pending or self._proc is None:
+        if not self._auto_confirm_pending:
             return
+        if self.settings.behavior.auto_confirm_first_launch:
+            self._send_enter(auto=True)
+            self.confirm_resolved.emit()
+        else:
+            self.waiting_for_confirm.emit()
+
+    def send_enter(self) -> None:
+        """用户点击「继续启动」时调用。"""
+        if not self._auto_confirm_pending:
+            return
+        self._send_enter(auto=False)
+        self.confirm_resolved.emit()
+
+    def _send_enter(self, auto: bool = False) -> None:
         self._auto_confirm_pending = False
-        stdin = self._proc.stdin
-        if stdin is None:
+        if self._proc is None or self._proc.stdin is None:
             return
         try:
-            stdin.write('\n')
-            stdin.flush()
-            self.log_bus.emit_line(LogSource.APP, '已自动确认首次启动提示', 'info')
+            self._proc.stdin.write('\n')
+            self._proc.stdin.flush()
+            msg = (
+                '已自动确认首次启动提示（可在设置中关闭）'
+                if auto else
+                '已确认首次启动提示'
+            )
+            self.log_bus.emit_line(LogSource.APP, msg, 'info')
         except (OSError, ValueError):
             pass
 
@@ -252,6 +272,9 @@ class ServerProcess(QObject):
         self._stop_timer.stop()
         self._stop_phase = 0
         self._proc = None
+        if self._auto_confirm_pending:
+            self._auto_confirm_pending = False
+            self.confirm_resolved.emit()
         self._set_state(ServerState.STOPPED)
         self.log_bus.emit_line(
             LogSource.APP, f'hoshimi 已退出（code={rc}）', 'info'
@@ -265,6 +288,9 @@ class ServerProcess(QObject):
             return
         if self._proc is None:
             return
+        if self._auto_confirm_pending:
+            self._auto_confirm_pending = False
+            self.confirm_resolved.emit()
         self._set_state(ServerState.STOPPING)
         self._stop_phase = 1
         pid = self._proc.pid

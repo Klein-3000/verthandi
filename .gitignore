@@ -9,5 +9,5 @@ settings.json.bak
 logs/
 data/
 home/
-runtime/
+runtime*/
 bin/

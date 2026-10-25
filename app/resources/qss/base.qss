@@ -200,3 +200,125 @@ QComboBox::drop-down {
     color: #9ca3af;
     border: 1px solid #e5e7eb;
 }
+
+/* ---------- 设置页 Checkbox ---------- */
+
+QCheckBox {
+    background: transparent;
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+}
+
+QCheckBox::indicator:hover {
+    border-color: #93c5fd;
+}
+
+QCheckBox::indicator:checked {
+    background: #2563eb;
+    border-color: #1d4ed8;
+}
+
+/* ---------- 设置页 QSpinBox ---------- */
+
+QSpinBox {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 3px 6px;
+    min-height: 22px;
+}
+
+QSpinBox:focus {
+    border-color: #93c5fd;
+}
+
+QSpinBox:disabled {
+    background: #f3f4f6;
+    color: #9ca3af;
+}
+
+QSpinBox::up-button,
+QSpinBox::down-button {
+    width: 18px;
+    border: none;
+    background: transparent;
+}
+
+/* ---------- 端口状态徽章 ---------- */
+
+#PortStatus {
+    background: transparent;
+    padding: 0 4px;
+}
+
+#PortStatus[state="ok"] {
+    color: #16a34a;
+}
+
+#PortStatus[state="error"] {
+    color: #dc2626;
+}
+
+#ToolbarButton[variant="danger"] {
+    background: #dc2626;
+    color: #ffffff;
+    border: 1px solid #b91c1c;
+}
+
+#ToolbarButton[variant="danger"]:hover {
+    background: #b91c1c;
+}
+
+#PrepareStatus {
+    background: transparent;
+    font-size: 13px;
+    color: #111827;
+}
+
+/* ---------- 状态值颜色 ---------- */
+
+#StatusValue[state="ok"] {
+    color: #16a34a;
+}
+
+#StatusValue[state="muted"] {
+    color: #9ca3af;
+}
+
+/* ---------- Toast ---------- */
+
+#Toast {
+    background: rgba(17, 24, 39, 0.92);
+    color: #ffffff;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 13px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ---------- 警告条 ---------- */
+
+#WarningBanner {
+    background: #fef3c7;
+    border: 1px solid #f59e0b;
+    border-radius: 8px;
+}
+
+#WarningIcon {
+    background: transparent;
+    color: #d97706;
+    font-size: 16px;
+}
+
+#WarningText {
+    background: transparent;
+    color: #92400e;
+    font-size: 13px;
+}

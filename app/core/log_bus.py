@@ -41,23 +41,43 @@ class LogBus(QObject):
 
 
 class SessionLogWriter(QObject):
-    """把日志总线上的所有行写入按会话命名的文件。
+    """按会话写日志文件，可运行时开/关。
 
-    文件：logs/session-YYYYMMDD-HHMMSS.log
-    生命周期：随 Verthandi 启动创建，退出时 close()。
+    - enable() 首次创建 session-YYYYMMDD-HHMMSS.log；
+    - 同一运行实例内 disable 后再次 enable，复用同一文件（追加）；
+    - close() 关闭文件，等下次启动创建新会话。
     """
 
     def __init__(self, log_dir: Path):
         super().__init__()
-        log_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
-        self.path = log_dir / f'session-{timestamp}.log'
+        self._log_dir = log_dir
+        self._file = None
+        self.path: Path | None = None
+
+    def enable(self) -> None:
+        if self._file is not None:
+            return
+        self._log_dir.mkdir(parents=True, exist_ok=True)
+        if self.path is None:
+            ts = datetime.now().strftime('%Y%m%d-%H%M%S')
+            self.path = self._log_dir / f'session-{ts}.log'
         self._file = self.path.open('a', encoding='utf-8', buffering=1)
+
+    def disable(self) -> None:
+        if self._file is None:
+            return
+        try:
+            self._file.close()
+        except OSError:
+            pass
+        self._file = None
 
     def bind(self, bus: LogBus) -> None:
         bus.line.connect(self._on_line, Qt.QueuedConnection)
 
     def _on_line(self, source: str, level: str, text: str) -> None:
+        if self._file is None:
+            return
         ts = datetime.now().isoformat(sep=' ', timespec='seconds')
         try:
             self._file.write(f'{ts} [{source}] [{level}] {text}\n')
@@ -65,7 +85,4 @@ class SessionLogWriter(QObject):
             pass
 
     def close(self) -> None:
-        try:
-            self._file.close()
-        except OSError:
-            pass
+        self.disable()

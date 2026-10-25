@@ -70,26 +70,20 @@ class ClientEntry:
 @dataclass
 class ServerConfig:
     version: str = ''
-    mode: str = 'local'          # local / official
     http_port: int = 8080
     game_port: int = 5001
 
     def to_dict(self) -> dict[str, Any]:
         return {
             'version': self.version,
-            'mode': self.mode,
             'httpPort': self.http_port,
             'gamePort': self.game_port,
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> 'ServerConfig':
-        mode = _as_str(d.get('mode'), 'local')
-        if mode not in ('local', 'official'):
-            mode = 'local'
         return cls(
             version=_as_str(d.get('version')),
-            mode=mode,
             http_port=_as_int(d.get('httpPort'), 8080),
             game_port=_as_int(d.get('gamePort'), 5001),
         )
@@ -129,12 +123,14 @@ class PrepareState:
     last_prepared_version: str = ''
     last_prepared_at: str = ''
     client_fingerprint: str = ''
+    warning_dismissed_at: str = ''
 
     def to_dict(self) -> dict[str, Any]:
         return {
             'lastPreparedVersion': self.last_prepared_version,
             'lastPreparedAt': self.last_prepared_at,
             'clientFingerprint': self.client_fingerprint,
+            'warningDismissedAt': self.warning_dismissed_at,
         }
 
     @classmethod
@@ -143,6 +139,7 @@ class PrepareState:
             last_prepared_version=_as_str(d.get('lastPreparedVersion')),
             last_prepared_at=_as_str(d.get('lastPreparedAt')),
             client_fingerprint=_as_str(d.get('clientFingerprint')),
+            warning_dismissed_at=_as_str(d.get('warningDismissedAt')),
         )
 
 
@@ -199,13 +196,15 @@ class BehaviorConfig:
     confirm_before_mode_switch: bool = True
     confirm_before_stop_server: bool = True
     auto_confirm_first_launch: bool = True
-    backend: str = 'powershell'  # powershell / native
+    log_to_file: bool = False
+    backend: str = 'powershell'
 
     def to_dict(self) -> dict[str, Any]:
         return {
             'confirmBeforeModeSwitch': self.confirm_before_mode_switch,
             'confirmBeforeStopServer': self.confirm_before_stop_server,
             'autoConfirmFirstLaunch': self.auto_confirm_first_launch,
+            'logToFile': self.log_to_file,
             'backend': self.backend,
         }
 
@@ -218,6 +217,7 @@ class BehaviorConfig:
             confirm_before_mode_switch=_as_bool(d.get('confirmBeforeModeSwitch'), True),
             confirm_before_stop_server=_as_bool(d.get('confirmBeforeStopServer'), True),
             auto_confirm_first_launch=_as_bool(d.get('autoConfirmFirstLaunch'), True),
+            log_to_file=_as_bool(d.get('logToFile'), False),
             backend=backend,
         )
 
