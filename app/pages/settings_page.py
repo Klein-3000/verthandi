@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QToolButton,
     QVBoxLayout,
@@ -79,7 +80,23 @@ class SettingsPage(QWidget):
         self._http_check: PortResult | None = None
         self._game_check: PortResult | None = None
 
-        layout = QVBoxLayout(self)
+        # 外层布局（无外边距，用于放置滚动区域）
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # 滚动区域
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        outer.addWidget(scroll)
+
+        # 内容容器
+        content = QWidget()
+        scroll.setWidget(content)
+
+        # 实际的内容布局（原有代码后续都往这个 layout 里塞）
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
 
