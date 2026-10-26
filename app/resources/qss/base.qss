@@ -393,3 +393,10 @@ QScrollBar::add-page:vertical,
 QScrollBar::sub-page:vertical {
     background: none;
 }
+
+/* 补充 danger 按钮在禁用时的灰色表现 */
+#ToolbarButton[variant="danger"]:disabled {
+    background: #f3f4f6;
+    color: #9ca3af;
+    border: 1px solid #e5e7eb;
+}

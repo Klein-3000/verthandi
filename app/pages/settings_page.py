@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import re
+import shutil
+from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
+    QApplication,
+    QInputDialog,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -25,6 +31,10 @@ from app.core.paths import Paths
 from app.core.port_check import PortResult, check_port
 from app.core.server_process import ServerProcess, ServerState
 from app.core.settings import ClientEntry, Settings, SettingsStore
+from app.core import hoshimi_importer
+from app.widgets.toast import show_toast
+from app.core import cleanup_manager as cm
+from app.widgets.cleanup_dialog import CleanupDialog
 
 
 RUNTIME_REQUIRED = ('protocol_lib.json', 'runtime.json', 'tables.json', 'tolua.dll')
@@ -42,7 +52,7 @@ def _scan_versions(bin_dir: Path) -> list[str]:
 
 
 class SettingsPage(QWidget):
-    settings_changed = Signal(str)   # 'game_dir' / 'version' / 'paths' / 'ports' / 'log' / 'behavior'
+    settings_changed = Signal(str)   # 'game_dir' / 'version' / 'paths' / 'ports' / 'log' / 'behavior' / 'cleanup'
     request_init = Signal()
 
     def __init__(
@@ -76,9 +86,14 @@ class SettingsPage(QWidget):
         title.setObjectName('PageTitle')
         layout.addWidget(title)
 
+        # 顶部警告条
+        self.log_warning_banner = self._build_log_warning_banner()
+        layout.addWidget(self.log_warning_banner)
+
         layout.addWidget(self._build_essential_card())
         layout.addWidget(self._build_behavior_card())
         layout.addWidget(self._build_logging_card())
+        layout.addWidget(self._build_cleanup_card())
         layout.addStretch(1)
 
         self.refresh_all()
@@ -121,10 +136,15 @@ class SettingsPage(QWidget):
         self.version_combo = QComboBox()
         self.version_combo.setMinimumWidth(220)
         self.version_combo.currentIndexChanged.connect(self._on_version_changed)
+        self.import_btn = QPushButton('导入…')
+        self.import_btn.setObjectName('ToolbarButton')
+        self.import_btn.setToolTip('从 ZIP 或 hoshimi.exe 文件导入')
+        self.import_btn.clicked.connect(self._on_import_hoshimi)
         row = QHBoxLayout()
         k = QLabel('hoshimi 版本'); k.setObjectName('StatusKey'); k.setFixedWidth(110)
         row.addWidget(k)
         row.addWidget(self.version_combo, 1)
+        row.addWidget(self.import_btn)
         box.addLayout(row)
 
         # home
@@ -325,6 +345,120 @@ class SettingsPage(QWidget):
 
         self.settings_changed.emit('log')
 
+    # ---------- 日志警告 ----------
+
+    def _build_log_warning_banner(self) -> QFrame:
+        banner = QFrame()
+        banner.setObjectName('WarningBanner')
+        banner.setVisible(False)
+        row = QHBoxLayout(banner)
+        row.setContentsMargins(12, 8, 12, 8)
+        row.setSpacing(8)
+
+        icon = QLabel('⚠')
+        icon.setObjectName('WarningIcon')
+        row.addWidget(icon)
+
+        self.log_warning_text = QLabel('')
+        self.log_warning_text.setObjectName('WarningText')
+        row.addWidget(self.log_warning_text, 1)
+
+        go_btn = QPushButton('去清理')
+        go_btn.setObjectName('ToolbarButton')
+        go_btn.clicked.connect(self._on_open_cleanup)
+        row.addWidget(go_btn)
+
+        close_btn = QPushButton('关闭')
+        close_btn.setObjectName('IconButton')
+        close_btn.clicked.connect(lambda: banner.setVisible(False))
+        row.addWidget(close_btn)
+
+        return banner
+
+    def _show_log_warning(self, log_info: cm.LogInfo) -> None:
+        self.log_warning_text.setText(
+            f'日志文件较多（{log_info.count} 个，约 {cm.format_size(log_info.total_size_bytes)}），建议清理。'
+        )
+        self.log_warning_banner.setVisible(True)
+
+    # ---------- 存储空间管理 ----------
+
+    def _build_cleanup_card(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName('Card')
+        box = QVBoxLayout(card)
+        box.setContentsMargins(16, 16, 16, 16)
+        box.setSpacing(8)
+
+        title = QLabel('存储空间管理')
+        title.setObjectName('CardTitle')
+        box.addWidget(title)
+
+        row = QHBoxLayout()
+        self.disk_usage_label = QLabel('计算中…')
+        self.disk_usage_label.setObjectName('MutedText')
+        row.addWidget(self.disk_usage_label)
+        row.addStretch(1)
+
+        self.open_cleanup_btn = QPushButton('打开清理中心')
+        self.open_cleanup_btn.setObjectName('ToolbarButton')
+        self.open_cleanup_btn.setProperty('variant', 'danger')
+        self.open_cleanup_btn.clicked.connect(self._on_open_cleanup)
+        row.addWidget(self.open_cleanup_btn)
+
+        box.addLayout(row)
+        return card
+
+    # ---------- 清理中心 ----------
+
+    def _on_open_cleanup(self) -> None:
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            dlg = CleanupDialog(
+                self.paths, self.settings, self.log_writer.path, self
+            )
+            QApplication.restoreOverrideCursor()
+            if dlg.exec() == QDialog.Accepted:
+                self._update_disk_usage()
+                self.settings_changed.emit('cleanup')
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, '错误', f'打开清理中心失败：\n{e}')
+
+    # ---------- 磁盘占用统计 ----------
+
+    def _update_disk_usage(self) -> None:
+        self.disk_usage_label.setText('计算中…')
+        # 延迟执行，避免阻塞 UI 初始化
+        QTimer.singleShot(50, self._do_update_disk_usage)
+
+    def _do_update_disk_usage(self) -> None:
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            versions = cm.scan_versions(self.paths, self.settings)
+            backups = cm.scan_runtime_backups(self.paths, self.settings)
+            log_info = cm.scan_logs(self.paths, self.settings)
+
+            total = sum(v.size_bytes for v in versions)
+            total += sum(b.size_bytes for b in backups)
+            total += log_info.total_size_bytes
+
+            self.disk_usage_label.setText(
+                f'当前占用：约 {cm.format_size(total)}'
+                f'（版本 {len(versions)} 个，备份 {len(backups)} 个，日志 {log_info.count} 个）'
+            )
+
+            # 判断是否要显示日志警告
+            if log_info.count >= 50:
+                self._show_log_warning(log_info)
+            else:
+                self.log_warning_banner.setVisible(False)
+
+        except Exception:
+            self.disk_usage_label.setText('计算失败')
+        finally:
+            QApplication.restoreOverrideCursor()
+
     # ---------- 刷新 ----------
 
     def refresh_all(self) -> None:
@@ -360,6 +494,8 @@ class SettingsPage(QWidget):
         self.log_checkbox.blockSignals(True)
         self.log_checkbox.setChecked(s.behavior.log_to_file)
         self.log_checkbox.blockSignals(False)
+
+        self._update_disk_usage()
 
     def _refresh_version_combo(self) -> None:
         self.version_combo.blockSignals(True)
@@ -494,6 +630,166 @@ class SettingsPage(QWidget):
             f'当前 runtime 由 {prepared} 准备，版本不一致，建议重新初始化。\n'
             f'未重新初始化时，启动服务可能出现异常。'
         )
+
+    # ---------- 导入 hoshimi ----------
+
+    def _on_import_hoshimi(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, '选择 hoshimi 文件',
+            str(self.base_dir),
+            'Hoshimi (*.zip *.exe);;ZIP 压缩包 (*.zip);;hoshimi.exe (*.exe);;所有文件 (*)',
+        )
+        if not file_path:
+            return
+        source = Path(file_path)
+
+        bin_dir = self.paths.bin_dir(self.settings)
+        try:
+            bin_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            QMessageBox.critical(self, '导入失败', f'创建 bin 目录失败：{e}')
+            return
+
+        ts = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+        temp_dir = bin_dir / f'import-{ts}'
+
+        try:
+            temp_dir.mkdir()
+        except OSError as e:
+            QMessageBox.critical(self, '导入失败', f'创建临时目录失败：{e}')
+            return
+
+        try:
+            self._do_import(source, bin_dir, temp_dir)
+        finally:
+            # 成功时 temp_dir 已被重命名，此时 temp_dir.exists() 为 False
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def _do_import(self, source: Path, bin_dir: Path, temp_dir: Path) -> None:
+        # ---------- 阶段 1：准备（wait cursor） ----------
+        scripts_ok = False
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            suffix = source.suffix.lower()
+            if suffix == '.zip':
+                scripts_ok = hoshimi_importer.prepare_from_zip(source, temp_dir)
+            elif suffix == '.exe':
+                scripts_ok = hoshimi_importer.prepare_from_exe(source, temp_dir)
+            else:
+                raise hoshimi_importer.ImportError(
+                    'bad_format',
+                    f'不支持的文件格式：{source.suffix}\n\n'
+                    '只支持 .zip 或 .exe。\n'
+                    '其他格式请手动解压后选择 hoshimi.exe 导入。',
+                )
+            hoshimi_importer.validate(temp_dir)
+            exe_path = temp_dir / 'hoshimi.exe'
+            detected = hoshimi_importer.detect_version(exe_path)
+        except hoshimi_importer.ImportError as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, '导入失败', e.message)
+            return
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(
+                self, '导入失败',
+                f'{type(e).__name__}: {e}'
+            )
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        # ---------- 阶段 2：scripts 缺失确认 ----------
+        if not scripts_ok:
+            reply = QMessageBox.question(
+                self, 'scripts 目录缺失',
+                '未能找到有效的 scripts/ 目录（缺失或为空）。\n\n'
+                'Verthandi 内置的切服功能不受影响，'
+                '但缺少 scripts 会导致部分辅助脚本功能（如战斗布局修复）不可用。\n\n'
+                '仍要继续导入吗？',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return  # 修复：用户选择“否”时退出导入
+
+        # ---------- 阶段 3：确定版本号 ----------
+        version = detected
+        if not version and source.suffix.lower() == '.zip':
+            version = hoshimi_importer.detect_version_from_filename(source.name)
+
+        if not version:
+            text, ok = QInputDialog.getText(
+                self, '输入 hoshimi 版本号',
+                '未能自动检测版本号（hoshimi.exe -h 无有效输出）。\n'
+                '请手动输入（例如 0.0.5）：',
+            )
+            if not ok or not text.strip():
+                return
+            version = text.strip()
+            if not re.match(r'^\d+\.\d+\.\d+$', version):
+                QMessageBox.critical(
+                    self, '版本号格式错误',
+                    f'版本号必须形如 0.0.5，收到：{version}',
+                )
+                return
+
+        # ---------- 阶段 4：冲突处理 ----------
+        target = bin_dir / version
+        action = 'new'
+        if target.exists():
+            action = self._ask_conflict_action(version)
+            if action == 'cancel':
+                return
+
+        # ---------- 阶段 5：落位 ----------
+        try:
+            final_path = hoshimi_importer.finalize(temp_dir, bin_dir, version, action)
+        except hoshimi_importer.ImportError as e:
+            QMessageBox.critical(self, '导入失败', e.message)
+            return
+
+        # ---------- 阶段 6：切换版本 ----------
+        self.settings.server.version = version
+        self.settings_store.save(self.settings)
+        self.log_bus.emit_line(
+            LogSource.APP,
+            f'hoshimi 已导入：{version}（{final_path}）',
+            'info',
+        )
+
+        self.refresh_all()
+        self.settings_changed.emit('version')
+        show_toast(self, f'已导入 hoshimi {version}')
+
+        # runtime 版本不匹配时提示重新初始化
+        self._check_prepare_after_version(version)
+
+    def _ask_conflict_action(self, version: str) -> str:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle('版本目录已存在')
+        box.setText(f'bin/{version}/ 已存在。')
+        box.setInformativeText(
+            '请选择处理方式：\n\n'
+            f'• 备份：现有目录重命名为 bin/{version}-backup-<时间>/，\n'
+            f'  然后放入新版本（推荐）\n'
+            f'• 覆盖：直接删除旧目录并放入新版本\n'
+            f'• 取消：不做任何改动'
+        )
+        backup_btn = box.addButton('备份', QMessageBox.AcceptRole)
+        overwrite_btn = box.addButton('覆盖', QMessageBox.DestructiveRole)
+        box.addButton('取消', QMessageBox.RejectRole)
+        box.setDefaultButton(backup_btn)
+        box.exec()
+
+        clicked = box.clickedButton()
+        if clicked is backup_btn:
+            return 'backup'
+        if clicked is overwrite_btn:
+            return 'overwrite'
+        return 'cancel'
 
     def _prompt_init(self, title: str, message: str) -> None:
         box = QMessageBox(self)
@@ -714,6 +1010,9 @@ class SettingsPage(QWidget):
         self.version_combo.setEnabled(editable)
         self.change_home_btn.setEnabled(editable)
         self.change_runtime_btn.setEnabled(editable)
+        self.import_btn.setEnabled(editable)
+        # 服务运行时灰显
+        self.open_cleanup_btn.setEnabled(editable)
 
         self.http_spin.setEnabled(editable)
         self.game_spin.setEnabled(editable)
