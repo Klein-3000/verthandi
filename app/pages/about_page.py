@@ -27,12 +27,11 @@ from app.core.paths import Paths
 from app.core.settings import Settings
 from app.widgets.toast import show_toast
 
-
-REPO_GITHUB = 'https://github.com/Klein-3000/verthandi'
-REPO_GITEE = 'https://gitee.com/verthandi-v/verthandi'
-ISSUES_GITHUB = 'https://github.com/Klein-3000/verthandi/issues'
-HOSHIMI_REPO = 'https://github.com/Enigfrank/Hoshimi'
-LICENSE_URL = 'https://www.apache.org/licenses/LICENSE-2.0'
+REPO_GITHUB = "https://github.com/Klein-3000/verthandi"
+REPO_GITEE = "https://gitee.com/verthandi-v/verthandi"
+ISSUES_GITHUB = "https://github.com/Klein-3000/verthandi/issues"
+HOSHIMI_REPO = "https://github.com/Enigfrank/Hoshimi"
+LICENSE_URL = "https://www.apache.org/licenses/LICENSE-2.0"
 
 
 class AboutPage(QWidget):
@@ -76,17 +75,17 @@ class AboutPage(QWidget):
         row = QHBoxLayout()
         row.setSpacing(10)
 
-        title = QLabel('Verthandi')
-        title.setObjectName('AboutName')
+        title = QLabel("Verthandi")
+        title.setObjectName("AboutName")
         row.addWidget(title)
 
-        version = QLabel(f'v{__version__}')
-        version.setObjectName('MutedText')
+        version = QLabel(f"v{__version__}")
+        version.setObjectName("MutedText")
         row.addWidget(version)
 
-        copy_btn = QPushButton('复制版本')
-        copy_btn.setObjectName('IconButton')
-        copy_btn.setToolTip('复制版本号到剪贴板')
+        copy_btn = QPushButton("复制版本")
+        copy_btn.setObjectName("IconButton")
+        copy_btn.setToolTip("复制版本号到剪贴板")
         copy_btn.clicked.connect(self._on_copy_version)
         row.addWidget(copy_btn)
 
@@ -94,10 +93,10 @@ class AboutPage(QWidget):
         layout.addLayout(row)
 
         desc = QLabel(
-            'Hoshimi 服务端的桌面控制台。\n'
-            '把 hoshimi.exe 的启动、切服、初始化封装成图形界面。'
+            "Hoshimi 服务端的桌面控制台。\n"
+            "把 hoshimi.exe 的启动、切服、初始化封装成图形界面。"
         )
-        desc.setObjectName('MutedText')
+        desc.setObjectName("MutedText")
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
@@ -106,13 +105,13 @@ class AboutPage(QWidget):
     # ---------- 相关项目 ----------
 
     def _build_links(self) -> QFrame:
-        card, box = self._new_card('相关项目')
+        card, box = self._new_card("相关项目")
 
         entries = (
-            ('Verthandi 仓库（GitHub）', REPO_GITHUB, '主仓库'),
-            ('Verthandi 仓库（Gitee）', REPO_GITEE, '国内镜像'),
-            ('问题反馈（GitHub Issues）', ISSUES_GITHUB, 'GUI 相关问题'),
-            ('Hoshimi 服务端（上游）', HOSHIMI_REPO, '服务端实现，非 GUI'),
+            ("Verthandi 仓库（GitHub）", REPO_GITHUB, "主仓库"),
+            ("Verthandi 仓库（Gitee）", REPO_GITEE, "国内镜像"),
+            ("问题反馈（GitHub Issues）", ISSUES_GITHUB, "GUI 相关问题"),
+            ("Hoshimi 服务端（上游）", HOSHIMI_REPO, "服务端实现，非 GUI"),
         )
         for label, url, hint in entries:
             box.addLayout(self._link_row(label, url, hint))
@@ -124,17 +123,17 @@ class AboutPage(QWidget):
         row.setSpacing(8)
 
         key = QLabel(label)
-        key.setObjectName('StatusKey')
+        key.setObjectName("StatusKey")
         key.setFixedWidth(190)
         row.addWidget(key)
 
         hint_lbl = QLabel(hint)
-        hint_lbl.setObjectName('MutedText')
+        hint_lbl.setObjectName("MutedText")
         hint_lbl.setWordWrap(True)
         row.addWidget(hint_lbl, 1)
 
-        open_btn = QPushButton('打开')
-        open_btn.setObjectName('IconButton')
+        open_btn = QPushButton("打开")
+        open_btn.setObjectName("IconButton")
         open_btn.clicked.connect(lambda _=False, u=url: self._open_url(u))
         row.addWidget(open_btn)
         return row
@@ -143,14 +142,14 @@ class AboutPage(QWidget):
 
     def _build_environment(self) -> QFrame:
         card = QFrame()
-        card.setObjectName('Card')
+        card.setObjectName("Card")
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(8)
 
         toggle = QToolButton()
-        toggle.setObjectName('PortToggle')
-        toggle.setText('运行环境')
+        toggle.setObjectName("PortToggle")
+        toggle.setText("运行环境")
         toggle.setCheckable(True)
         toggle.setChecked(False)
         toggle.setArrowType(Qt.RightArrow)
@@ -164,35 +163,35 @@ class AboutPage(QWidget):
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(6)
 
-        exe, version, auto = find_hoshimi_exe(self.paths, self.settings)
+        _exe, version, auto = find_hoshimi_exe(self.paths, self.settings)
         if version:
-            version_text = f'{version}（自动选择）' if auto else version
+            version_text = f"{version}（自动选择）" if auto else version
         else:
-            version_text = '未找到'
+            version_text = "未找到"
 
         rows = (
-            ('Python', QLabel(self._python_version())),
-            ('PySide6', QLabel(self._pyside_version())),
-            ('运行模式', QLabel(self._mode_label())),
-            ('配置路径', None),      # 特殊行：路径 + 打开按钮
-            ('home 目录', None),
-            ('runtime 目录', None),
-            ('hoshimi 版本', QLabel(version_text)),
+            ("Python", QLabel(self._python_version())),
+            ("PySide6", QLabel(self._pyside_version())),
+            ("运行模式", QLabel(self._mode_label())),
+            ("配置路径", None),  # 特殊行：路径 + 打开按钮
+            ("home 目录", None),
+            ("runtime 目录", None),
+            ("hoshimi 版本", QLabel(version_text)),
         )
 
         path_rows = {
-            '配置路径': self.paths.settings_path.parent,
-            'home 目录': self.paths.home_dir(self.settings),
-            'runtime 目录': self.paths.runtime_dir(self.settings),
+            "配置路径": self.paths.settings_path.parent,
+            "home 目录": self.paths.home_dir(self.settings),
+            "runtime 目录": self.paths.runtime_dir(self.settings),
         }
 
         for i, (name, widget) in enumerate(rows):
             key = QLabel(name)
-            key.setObjectName('StatusKey')
+            key.setObjectName("StatusKey")
             key.setFixedWidth(120)
             grid.addWidget(key, i, 0)
             if widget is not None:
-                widget.setObjectName('MutedText')
+                widget.setObjectName("MutedText")
                 widget.setTextInteractionFlags(Qt.TextSelectableByMouse)
                 grid.addWidget(widget, i, 1)
             else:
@@ -216,12 +215,12 @@ class AboutPage(QWidget):
         row.setSpacing(8)
 
         label = QLabel(str(path))
-        label.setObjectName('MutedText')
+        label.setObjectName("MutedText")
         label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         row.addWidget(label, 1)
 
-        btn = QPushButton('打开')
-        btn.setObjectName('IconButton')
+        btn = QPushButton("打开")
+        btn.setObjectName("IconButton")
         btn.clicked.connect(lambda _=False, p=path: self._open_path(p))
         row.addWidget(btn)
         return row
@@ -229,13 +228,13 @@ class AboutPage(QWidget):
     # ---------- 免责声明 ----------
 
     def _build_disclaimer(self) -> QFrame:
-        card, box = self._new_card('免责声明')
+        card, box = self._new_card("免责声明")
         text = QLabel(
-            '本项目与《深空之眼》官方及 Hoshimi 服务端团队均无关联。\n'
-            '仅供本地测试与熟人联机使用，请勿用于商业用途。\n'
-            '使用本项目产生的任何后果由使用者自行承担。'
+            "本项目与《深空之眼》官方及 Hoshimi 服务端团队均无关联。\n"
+            "仅供本地测试与熟人联机使用，请勿用于商业用途。\n"
+            "使用本项目产生的任何后果由使用者自行承担。"
         )
-        text.setObjectName('MutedText')
+        text.setObjectName("MutedText")
         text.setWordWrap(True)
         box.addWidget(text)
         return card
@@ -243,25 +242,25 @@ class AboutPage(QWidget):
     # ---------- 致谢与许可 ----------
 
     def _build_thanks(self) -> QFrame:
-        card, box = self._new_card('致谢与许可')
+        card, box = self._new_card("致谢与许可")
 
         for item in (
-            'Hoshimi 服务端（Enigfrank）',
-            'PySide6（Qt for Python，LGPL-3.0）',
-            'pycryptodome',
-            'psutil',
+            "Hoshimi 服务端（Enigfrank）",
+            "PySide6（Qt for Python，LGPL-3.0）",
+            "pycryptodome",
+            "psutil",
         ):
-            lbl = QLabel(f'• {item}')
-            lbl.setObjectName('MutedText')
+            lbl = QLabel(f"• {item}")
+            lbl.setObjectName("MutedText")
             box.addWidget(lbl)
 
         row = QHBoxLayout()
-        lic = QLabel('许可证：Apache-2.0')
-        lic.setObjectName('MutedText')
+        lic = QLabel("许可证：Apache-2.0")
+        lic.setObjectName("MutedText")
         row.addWidget(lic)
         row.addStretch(1)
-        view_btn = QPushButton('查看许可证')
-        view_btn.setObjectName('IconButton')
+        view_btn = QPushButton("查看许可证")
+        view_btn.setObjectName("IconButton")
         view_btn.clicked.connect(self._on_view_license)
         row.addWidget(view_btn)
         box.addLayout(row)
@@ -272,71 +271,74 @@ class AboutPage(QWidget):
 
     def _new_card(self, title_text: str) -> tuple[QFrame, QVBoxLayout]:
         card = QFrame()
-        card.setObjectName('Card')
+        card.setObjectName("Card")
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(8)
 
         title = QLabel(title_text)
-        title.setObjectName('CardTitle')
+        title.setObjectName("CardTitle")
         layout.addWidget(title)
         return card, layout
 
     def _python_version(self) -> str:
         v = sys.version_info
-        return f'{v.major}.{v.minor}.{v.micro}'
+        return f"{v.major}.{v.minor}.{v.micro}"
 
     def _pyside_version(self) -> str:
         try:
             import PySide6
+
             return PySide6.__version__
         except Exception:
-            return '未知'
+            return "未知"
 
     def _mode_label(self) -> str:
-        return '打包（onedir）' if getattr(sys, 'frozen', False) else '源码'
+        return "打包（onedir）" if getattr(sys, "frozen", False) else "源码"
 
     # ---------- 交互 ----------
 
     def _open_url(self, url: str) -> None:
         if not QDesktopServices.openUrl(QUrl(url)):
-            QMessageBox.warning(self, '无法打开链接', f'系统未能打开：\n{url}')
+            QMessageBox.warning(self, "无法打开链接", f"系统未能打开：\n{url}")
 
     def _open_path(self, path: Path) -> None:
         try:
             path.mkdir(parents=True, exist_ok=True)
         except OSError as e:
             QMessageBox.warning(
-                self, '无法打开目录',
-                f'目录创建失败：\n{path}\n\n{e}',
+                self,
+                "无法打开目录",
+                f"目录创建失败：\n{path}\n\n{e}",
             )
             return
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
             QMessageBox.warning(
-                self, '无法打开目录',
-                f'系统未能打开：\n{path}',
+                self,
+                "无法打开目录",
+                f"系统未能打开：\n{path}",
             )
 
     def _on_copy_version(self) -> None:
         QApplication.clipboard().setText(__version__)
-        show_toast(self, f'已复制版本号：{__version__}')
+        show_toast(self, f"已复制版本号：{__version__}")
 
     def _on_view_license(self) -> None:
-        license_path = self.base_dir / 'LICENSE'
+        license_path = self.base_dir / "LICENSE"
         if license_path.exists():
             try:
-                text = license_path.read_text(encoding='utf-8')
+                text = license_path.read_text(encoding="utf-8")
             except OSError as e:
-                text = f'读取 LICENSE 失败：{e}'
+                text = f"读取 LICENSE 失败：{e}"
         else:
             text = (
-                'LICENSE 文件未找到。\n\n'
-                'Verthandi 采用 Apache License 2.0 发布。\n'
-                f'完整文本请访问：{LICENSE_URL}'
+                "LICENSE 文件未找到。\n\n"
+                "Verthandi 采用 Apache License 2.0 发布。\n"
+                f"完整文本请访问：{LICENSE_URL}"
             )
 
         dialog = QDialog(self)
-        dialog.setWindowTitle('许可证 - Apache-2.0')
+        dialog.setWindowTitle("许可证 - Apache-2.0")
         dialog.setMinimumSize(680, 520)
 
         layout = QVBoxLayout(dialog)
@@ -344,7 +346,7 @@ class AboutPage(QWidget):
         layout.setSpacing(10)
 
         viewer = QPlainTextEdit()
-        viewer.setObjectName('LogView')
+        viewer.setObjectName("LogView")
         viewer.setReadOnly(True)
         viewer.setLineWrapMode(QPlainTextEdit.NoWrap)
         viewer.setPlainText(text)
@@ -352,8 +354,8 @@ class AboutPage(QWidget):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
-        close_btn = QPushButton('关闭')
-        close_btn.setObjectName('ToolbarButton')
+        close_btn = QPushButton("关闭")
+        close_btn.setObjectName("ToolbarButton")
         close_btn.clicked.connect(dialog.accept)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)

@@ -8,11 +8,11 @@ from PySide6.QtCore import QObject, Qt, Signal
 
 
 class LogSource(str, Enum):
-    HOSHIMI = 'hoshimi'
-    SWITCH = 'switch'
-    PREPARE = 'prepare'
-    APP = 'app'
-    GAME = 'game'
+    HOSHIMI = "hoshimi"
+    SWITCH = "switch"
+    PREPARE = "prepare"
+    APP = "app"
+    GAME = "game"
 
 
 class LogBus(QObject):
@@ -29,12 +29,12 @@ class LogBus(QObject):
         self,
         source: LogSource | str,
         text: str,
-        level: str = 'info',
+        level: str = "info",
     ) -> None:
         if isinstance(source, LogSource):
             source = source.value
-        if text.endswith('\n'):
-            text = text.rstrip('\r\n')
+        if text.endswith("\n"):
+            text = text.rstrip("\r\n")
         if not text:
             return
         self.line.emit(source, level, text)
@@ -59,9 +59,9 @@ class SessionLogWriter(QObject):
             return
         self._log_dir.mkdir(parents=True, exist_ok=True)
         if self.path is None:
-            ts = datetime.now().strftime('%Y%m%d-%H%M%S')
-            self.path = self._log_dir / f'session-{ts}.log'
-        self._file = self.path.open('a', encoding='utf-8', buffering=1)
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            self.path = self._log_dir / f"session-{ts}.log"
+        self._file = self.path.open("a", encoding="utf-8", buffering=1)
 
     def disable(self) -> None:
         if self._file is None:
@@ -78,9 +78,9 @@ class SessionLogWriter(QObject):
     def _on_line(self, source: str, level: str, text: str) -> None:
         if self._file is None:
             return
-        ts = datetime.now().isoformat(sep=' ', timespec='seconds')
+        ts = datetime.now().isoformat(sep=" ", timespec="seconds")
         try:
-            self._file.write(f'{ts} [{source}] [{level}] {text}\n')
+            self._file.write(f"{ts} [{source}] [{level}] {text}\n")
         except OSError:
             pass
 

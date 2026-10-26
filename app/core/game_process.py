@@ -10,7 +10,7 @@ try:
 except ImportError:
     psutil = None
 
-EXE_NAME = 'AetherGazer.exe'
+EXE_NAME = "AetherGazer.exe"
 
 
 def is_game_running(client_dir: Path | None = None) -> bool:
@@ -22,19 +22,19 @@ def is_game_running(client_dir: Path | None = None) -> bool:
     if psutil is None:
         return False
 
-    target = ''
+    target = ""
     if client_dir is not None:
         target = str((client_dir / EXE_NAME).resolve()).lower()
 
-    for proc in psutil.process_iter(['name', 'exe']):
+    for proc in psutil.process_iter(["name", "exe"]):
         try:
             info = proc.info
-            name = (info.get('name') or '').lower()
+            name = (info.get("name") or "").lower()
             if name != EXE_NAME.lower():
                 continue
             if not target:
                 return True
-            exe = info.get('exe')
+            exe = info.get("exe")
             if not exe:
                 return True
             if str(Path(exe).resolve()).lower() == target:
@@ -43,16 +43,18 @@ def is_game_running(client_dir: Path | None = None) -> bool:
             continue
     return False
 
+
 def launch_game(client_dir: Path) -> tuple[bool, str]:
     """启动 AetherGazer.exe，不等待。返回 (成功, 错误消息)。"""
     exe = client_dir / EXE_NAME
     if not exe.exists():
-        return False, f'AetherGazer.exe 不存在：{exe}'
+        return False, f"AetherGazer.exe 不存在：{exe}"
     try:
         subprocess.Popen([str(exe)], cwd=str(client_dir))
     except OSError as e:
-        return False, f'启动游戏失败：{e}'
-    return True, ''
+        return False, f"启动游戏失败：{e}"
+    return True, ""
+
 
 class GameWatcher(QObject):
     """周期性检测游戏进程状态，状态变化时发信号。"""

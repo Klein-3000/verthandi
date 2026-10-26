@@ -31,10 +31,10 @@ class VerthandiApplication(QApplication):
         # 只创建，不启动；等待 MainWindow 把 running_changed 信号连好后再 start
         self.game_watcher = GameWatcher()
 
-        self.setApplicationName('Verthandi')
-        self.setApplicationDisplayName('Verthandi')
-        self.setOrganizationName('Verthandi')
-        self.setApplicationVersion('0.1.0')
+        self.setApplicationName("Verthandi")
+        self.setApplicationDisplayName("Verthandi")
+        self.setOrganizationName("Verthandi")
+        self.setApplicationVersion("0.1.0")
 
         self._translator = QTranslator(self)
         self._load_translator()
@@ -60,30 +60,32 @@ class VerthandiApplication(QApplication):
         if self.settings.behavior.log_to_file:
             self.log_writer.enable()
             self.log_bus.emit_line(
-                LogSource.APP, f'会话日志：{self.log_writer.path}', 'info'
+                LogSource.APP, f"会话日志：{self.log_writer.path}", "info"
             )
         else:
-            self.log_bus.emit_line(LogSource.APP, '日志文件已关闭（可在设置中开启）', 'info')
+            self.log_bus.emit_line(
+                LogSource.APP, "日志文件已关闭（可在设置中开启）", "info"
+            )
 
     def _load_translator(self) -> None:
         """加载 Qt 内置中文翻译，让 QMessageBox、QFileDialog 等自动中文。"""
         path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
-        if self._translator.load('qtbase_zh_CN', path):
+        if self._translator.load("qtbase_zh_CN", path):
             self.installTranslator(self._translator)
 
     def _qss_path(self) -> Path:
-        return self.base_dir / 'app' / 'resources' / 'qss' / 'base.qss'
+        return self.base_dir / "app" / "resources" / "qss" / "base.qss"
 
     def _load_qss(self) -> None:
         path = self._qss_path()
         if path.exists():
-            self.setStyleSheet(path.read_text(encoding='utf-8'))
+            self.setStyleSheet(path.read_text(encoding="utf-8"))
 
     def apply_theme(self, theme: str) -> None:
         scheme = {
-            'system': Qt.ColorScheme.Unknown,
-            'light': Qt.ColorScheme.Light,
-            'dark': Qt.ColorScheme.Dark,
+            "system": Qt.ColorScheme.Unknown,
+            "light": Qt.ColorScheme.Light,
+            "dark": Qt.ColorScheme.Dark,
         }.get(theme, Qt.ColorScheme.Unknown)
         try:
             self.styleHints().setColorScheme(scheme)

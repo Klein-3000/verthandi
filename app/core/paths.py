@@ -6,14 +6,13 @@ from pathlib import Path
 
 def detect_base_dir() -> Path:
     """portable 根目录：打包后取 exe 所在目录，开发时取仓库根。"""
-    if getattr(sys, 'frozen', False):
+    if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent.parent.parent
 
 
 class Paths:
     """所有相对路径基于 base_dir 解析；绝对路径原样保留。"""
-
 
     def __init__(self, base_dir: Path | None = None):
         self.base_dir = (base_dir or detect_base_dir()).resolve()
@@ -37,11 +36,11 @@ class Paths:
 
     @property
     def settings_path(self) -> Path:
-        return self.base_dir / 'settings.json'
+        return self.base_dir / "settings.json"
 
     @property
     def settings_backup_path(self) -> Path:
-        return self.base_dir / 'settings.json.bak'
+        return self.base_dir / "settings.json.bak"
 
     # ---------- 从 Settings 派生常用目录 ----------
 

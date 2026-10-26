@@ -13,7 +13,7 @@ def version_key(name: str) -> tuple:
     非数字段退化为字符串比较，避免解析失败导致排序崩溃。
     """
     parts: list[tuple[int, object]] = []
-    for seg in name.split('.'):
+    for seg in name.split("."):
         if seg.isdigit():
             parts.append((0, int(seg)))
         else:
@@ -34,17 +34,20 @@ def find_hoshimi_exe(paths: Paths, settings: Settings) -> tuple[Path, str, bool]
     version = settings.server.version
 
     if version:
-        return bin_dir / version / 'hoshimi.exe', version, False
+        return bin_dir / version / "hoshimi.exe", version, False
 
     if bin_dir.exists():
         candidates = sorted(
-            (d for d in bin_dir.iterdir()
-             if d.is_dir() and (d / 'hoshimi.exe').exists()),
+            (
+                d
+                for d in bin_dir.iterdir()
+                if d.is_dir() and (d / "hoshimi.exe").exists()
+            ),
             key=lambda d: version_key(d.name),
             reverse=True,
         )
         if candidates:
             chosen = candidates[0]
-            return chosen / 'hoshimi.exe', chosen.name, True
+            return chosen / "hoshimi.exe", chosen.name, True
 
-    return bin_dir / 'hoshimi.exe', '', False
+    return bin_dir / "hoshimi.exe", "", False

@@ -16,7 +16,6 @@ from app.core.log_bus import LogBus, LogSource
 from app.core.paths import Paths
 from app.core.settings import Settings
 
-
 # ---------- Windows 常量 ----------
 
 CREATE_NEW_CONSOLE = 0x00000010
@@ -31,10 +30,10 @@ PROCESS_TERMINATE = 0x0001
 
 
 class ServerState(str, Enum):
-    STOPPED = 'stopped'
-    STARTING = 'starting'
-    RUNNING = 'running'
-    STOPPING = 'stopping'
+    STOPPED = "stopped"
+    STARTING = "starting"
+    RUNNING = "running"
+    STOPPING = "stopping"
 
 
 class ServerProcess(QObject):
@@ -47,13 +46,13 @@ class ServerProcess(QObject):
     - Job Object：KILL_ON_JOB_CLOSE，Verthandi 崩溃也能带走 hoshimi
     """
 
-    state_changed = Signal(str)          # ServerState.value
-    waiting_for_confirm = Signal()       # 需要用户手动确认
-    confirm_resolved = Signal()          # 确认完成（自动或手动）
-    _stdout_line = Signal(str)           # 内部：reader 线程 → 主线程
-    _process_exited = Signal(int)        # 内部：monitor 线程 → 主线程
+    state_changed = Signal(str)  # ServerState.value
+    waiting_for_confirm = Signal()  # 需要用户手动确认
+    confirm_resolved = Signal()  # 确认完成（自动或手动）
+    _stdout_line = Signal(str)  # 内部：reader 线程 → 主线程
+    _process_exited = Signal(int)  # 内部：monitor 线程 → 主线程
 
-    FIRST_LAUNCH_HINTS = ('按回车', 'Press Enter', '按回车继续')
+    FIRST_LAUNCH_HINTS = ("按回车", "Press Enter", "按回车继续")
 
     def __init__(self, paths: Paths, settings: Settings, log_bus: LogBus):
         super().__init__()
@@ -102,25 +101,26 @@ class ServerProcess(QObject):
             return None
         try:
             result = subprocess.run(
-                [str(exe), 'version'],
+                [str(exe), "version"],
                 capture_output=True,
+                check=False,
                 text=True,
-                encoding='utf-8',
-                errors='replace',
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout_ms / 1000,
             )
         except (subprocess.TimeoutExpired, OSError):
             return None
-        return self._parse_version((result.stdout or '') + (result.stderr or ''))
+        return self._parse_version((result.stdout or "") + (result.stderr or ""))
 
     @staticmethod
     def _parse_version(text: str) -> tuple[str, str] | None:
-        version = compile_time = ''
+        version = compile_time = ""
         for line in text.splitlines():
-            if '当前版本' in line and '：' in line:
-                version = line.split('：', 1)[1].strip()
-            elif '编译时间' in line and '：' in line:
-                compile_time = line.split('：', 1)[1].strip()
+            if "当前版本" in line and "：" in line:
+                version = line.split("：", 1)[1].strip()
+            elif "编译时间" in line and "：" in line:
+                compile_time = line.split("：", 1)[1].strip()
         if version:
             return version, compile_time
         return None
@@ -133,7 +133,7 @@ class ServerProcess(QObject):
 
         exe = self.hoshimi_exe()
         if not exe.exists():
-            self.log_bus.emit_line(LogSource.APP, f'找不到 hoshimi.exe：{exe}', 'error')
+            self.log_bus.emit_line(LogSource.APP, f"找不到 hoshimi.exe：{exe}", "error")
             return False
 
         home = self.paths.home_dir(self.settings)
@@ -141,24 +141,27 @@ class ServerProcess(QObject):
         home.mkdir(parents=True, exist_ok=True)
 
         cmd = [
-            str(exe), 'serve',
-            '--home', str(home),
-            '--runtime-dir', str(runtime),
+            str(exe),
+            "serve",
+            "--home",
+            str(home),
+            "--runtime-dir",
+            str(runtime),
         ]
         env = os.environ.copy()
-        env['AGL_HTTP_PORT'] = str(self.settings.server.http_port)
-        env['AGL_TCP_PORT'] = str(self.settings.server.game_port)
+        env["AGL_HTTP_PORT"] = str(self.settings.server.http_port)
+        env["AGL_TCP_PORT"] = str(self.settings.server.game_port)
 
         creationflags = 0
         startupinfo = None
-        if sys.platform == 'win32':
+        if sys.platform == "win32":
             creationflags = CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = 0  # SW_HIDE
 
         self.log_bus.emit_line(
-            LogSource.HOSHIMI, f'> {exe.name} {" ".join(cmd[1:])}', 'info'
+            LogSource.HOSHIMI, f"> {exe.name} {' '.join(cmd[1:])}", "info"
         )
 
         try:
@@ -168,8 +171,8 @@ class ServerProcess(QObject):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                encoding='utf-8',
-                errors='replace',
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
                 env=env,
                 cwd=str(exe.parent),
@@ -177,7 +180,7 @@ class ServerProcess(QObject):
                 startupinfo=startupinfo,
             )
         except OSError as exc:
-            self.log_bus.emit_line(LogSource.APP, f'hoshimi 启动失败：{exc}', 'error')
+            self.log_bus.emit_line(LogSource.APP, f"hoshimi 启动失败：{exc}", "error")
             self._proc = None
             return False
 
@@ -205,7 +208,7 @@ class ServerProcess(QObject):
             return
         try:
             for raw in stdout:
-                text = raw.rstrip('\r\n')
+                text = raw.rstrip("\r\n")
                 if not text:
                     continue
                 self._stdout_line.emit(text)
@@ -220,7 +223,7 @@ class ServerProcess(QObject):
 
     def _handle_line(self, text: str) -> None:
         self.log_bus.emit_line(LogSource.HOSHIMI, text)
-        if self._state == ServerState.STARTING and '服务已启动' in text:
+        if self._state == ServerState.STARTING and "服务已启动" in text:
             self._set_state(ServerState.RUNNING)
         if any(hint in text for hint in self.FIRST_LAUNCH_HINTS):
             self._maybe_auto_confirm()
@@ -246,14 +249,14 @@ class ServerProcess(QObject):
         if self._proc is None or self._proc.stdin is None:
             return
         try:
-            self._proc.stdin.write('\n')
+            self._proc.stdin.write("\n")
             self._proc.stdin.flush()
             msg = (
-                '已自动确认首次启动提示（可在设置中关闭）'
-                if auto else
-                '已确认首次启动提示'
+                "已自动确认首次启动提示（可在设置中关闭）"
+                if auto
+                else "已确认首次启动提示"
             )
-            self.log_bus.emit_line(LogSource.APP, msg, 'info')
+            self.log_bus.emit_line(LogSource.APP, msg, "info")
         except (OSError, ValueError):
             pass
 
@@ -265,9 +268,7 @@ class ServerProcess(QObject):
             self._auto_confirm_pending = False
             self.confirm_resolved.emit()
         self._set_state(ServerState.STOPPED)
-        self.log_bus.emit_line(
-            LogSource.APP, f'hoshimi 已退出（code={rc}）', 'info'
-        )
+        self.log_bus.emit_line(LogSource.APP, f"hoshimi 已退出（code={rc}）", "info")
         self._close_job()
 
     # ---------- 停止（三级） ----------
@@ -284,13 +285,15 @@ class ServerProcess(QObject):
         self._stop_phase = 1
         pid = self._proc.pid
         if self._send_ctrl_break(pid):
-            self.log_bus.emit_line(LogSource.APP, f'已发送 CTRL_BREAK 到 pid={pid}', 'info')
+            self.log_bus.emit_line(
+                LogSource.APP, f"已发送 CTRL_BREAK 到 pid={pid}", "info"
+            )
             self._stop_timer.start(8000)
         else:
             self.log_bus.emit_line(
                 LogSource.APP,
-                'CTRL_BREAK 不可用（开发模式或控制台冲突），直接 terminate',
-                'warning',
+                "CTRL_BREAK 不可用（开发模式或控制台冲突），直接 terminate",
+                "warning",
             )
             self._escalate_stop()
 
@@ -312,7 +315,9 @@ class ServerProcess(QObject):
             return
         if self._stop_phase == 1:
             self._stop_phase = 2
-            self.log_bus.emit_line(LogSource.APP, 'CTRL_BREAK 超时，发送 terminate', 'warning')
+            self.log_bus.emit_line(
+                LogSource.APP, "CTRL_BREAK 超时，发送 terminate", "warning"
+            )
             try:
                 self._proc.terminate()
             except OSError:
@@ -320,7 +325,7 @@ class ServerProcess(QObject):
             self._stop_timer.start(3000)
         elif self._stop_phase == 2:
             self.log_bus.emit_line(
-                LogSource.APP, 'terminate 超时，强制 kill（可能未保存）', 'error'
+                LogSource.APP, "terminate 超时，强制 kill（可能未保存）", "error"
             )
             try:
                 self._proc.kill()
@@ -333,16 +338,19 @@ class ServerProcess(QObject):
         Verthandi 自身有控制台（开发模式）时 AttachConsole 会失败；
         打包为 windowed 后无控制台，Attach 成功，CTRL_BREAK 生效。
         """
-        if sys.platform != 'win32':
+        if sys.platform != "win32":
             return False
         try:
-            kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
             kernel32.AttachConsole.argtypes = [wintypes.DWORD]
             kernel32.AttachConsole.restype = wintypes.BOOL
             if not kernel32.AttachConsole(pid):
                 return False
             try:
-                kernel32.GenerateConsoleCtrlEvent.argtypes = [wintypes.DWORD, wintypes.DWORD]
+                kernel32.GenerateConsoleCtrlEvent.argtypes = [
+                    wintypes.DWORD,
+                    wintypes.DWORD,
+                ]
                 kernel32.GenerateConsoleCtrlEvent.restype = wintypes.BOOL
                 return bool(kernel32.GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid))
             finally:
@@ -353,49 +361,52 @@ class ServerProcess(QObject):
     # ---------- Job Object ----------
 
     def _create_job_and_assign(self, pid: int) -> None:
-        if sys.platform != 'win32':
+        if sys.platform != "win32":
             return
         try:
-            k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
             class IO_COUNTERS(ctypes.Structure):
                 _fields_ = [
-                    ('ReadOperationCount', ctypes.c_ulonglong),
-                    ('WriteOperationCount', ctypes.c_ulonglong),
-                    ('OtherOperationCount', ctypes.c_ulonglong),
-                    ('ReadTransferCount', ctypes.c_ulonglong),
-                    ('WriteTransferCount', ctypes.c_ulonglong),
-                    ('OtherTransferCount', ctypes.c_ulonglong),
+                    ("ReadOperationCount", ctypes.c_ulonglong),
+                    ("WriteOperationCount", ctypes.c_ulonglong),
+                    ("OtherOperationCount", ctypes.c_ulonglong),
+                    ("ReadTransferCount", ctypes.c_ulonglong),
+                    ("WriteTransferCount", ctypes.c_ulonglong),
+                    ("OtherTransferCount", ctypes.c_ulonglong),
                 ]
 
             class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
                 _fields_ = [
-                    ('PerProcessUserTimeLimit', ctypes.c_int64),
-                    ('PerJobUserTimeLimit', ctypes.c_int64),
-                    ('LimitFlags', wintypes.DWORD),
-                    ('MinimumWorkingSetSize', ctypes.c_size_t),
-                    ('MaximumWorkingSetSize', ctypes.c_size_t),
-                    ('ActiveProcessLimit', wintypes.DWORD),
-                    ('Affinity', ctypes.c_size_t),
-                    ('PriorityClass', wintypes.DWORD),
-                    ('SchedulingClass', wintypes.DWORD),
+                    ("PerProcessUserTimeLimit", ctypes.c_int64),
+                    ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD),
+                    ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t),
+                    ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t),
+                    ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD),
                 ]
 
             class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
                 _fields_ = [
-                    ('BasicLimitInformation', JOBOBJECT_BASIC_LIMIT_INFORMATION),
-                    ('IoInfo', IO_COUNTERS),
-                    ('ProcessMemoryLimit', ctypes.c_size_t),
-                    ('JobMemoryLimit', ctypes.c_size_t),
-                    ('PeakProcessMemoryUsed', ctypes.c_size_t),
-                    ('PeakJobMemoryUsed', ctypes.c_size_t),
+                    ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                    ("IoInfo", IO_COUNTERS),
+                    ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t),
                 ]
 
             k32.CreateJobObjectW.restype = wintypes.HANDLE
             k32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
             k32.SetInformationJobObject.restype = wintypes.BOOL
             k32.SetInformationJobObject.argtypes = [
-                wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD
+                wintypes.HANDLE,
+                ctypes.c_int,
+                wintypes.LPVOID,
+                wintypes.DWORD,
             ]
             k32.AssignProcessToJobObject.restype = wintypes.BOOL
             k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
@@ -409,8 +420,10 @@ class ServerProcess(QObject):
             info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
             info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
             if not k32.SetInformationJobObject(
-                job, JobObjectExtendedLimitInformation,
-                ctypes.byref(info), ctypes.sizeof(info)
+                job,
+                JobObjectExtendedLimitInformation,
+                ctypes.byref(info),
+                ctypes.sizeof(info),
             ):
                 k32.CloseHandle(job)
                 return
@@ -426,15 +439,19 @@ class ServerProcess(QObject):
                 return
 
             self._job_handle = job
-            self.log_bus.emit_line(LogSource.APP, '已将 hoshimi 加入 Job Object', 'info')
+            self.log_bus.emit_line(
+                LogSource.APP, "已将 hoshimi 加入 Job Object", "info"
+            )
         except Exception as exc:
-            self.log_bus.emit_line(LogSource.APP, f'Job Object 创建失败：{exc}', 'warning')
+            self.log_bus.emit_line(
+                LogSource.APP, f"Job Object 创建失败：{exc}", "warning"
+            )
 
     def _close_job(self) -> None:
         if not self._job_handle:
             return
         try:
-            ctypes.WinDLL('kernel32').CloseHandle(wintypes.HANDLE(self._job_handle))
+            ctypes.WinDLL("kernel32").CloseHandle(wintypes.HANDLE(self._job_handle))
         except OSError:
             pass
         self._job_handle = 0

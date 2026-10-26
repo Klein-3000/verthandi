@@ -1,7 +1,7 @@
 [project]
 name = "verthandi"
 version = "0.1.0"
-description = "Add your description here"
+description = "Hoshimi 服务端的桌面控制台，提供图形化启停、切服、初始化与资源管理"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -13,3 +13,10 @@ dependencies = [
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"
 default = true
+
+[tool.ruff.lint]
+ignore = [
+    "DTZ005", "DTZ006", # 忽略本地时间未带时区的问题（桌面端单机使用，无需严格时区）
+    "BLE001",           # 忽略 `except Exception:`（GUI 应用必须用大网兜底，防止程序闪退）
+    "S110", "S112",     # 忽略 `try-except-pass` 或 `continue`（常见于探测和清理逻辑）
+]

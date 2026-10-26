@@ -4,8 +4,12 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QHBoxLayout, QMainWindow, QMessageBox, QProgressDialog,
-    QStackedWidget, QWidget,
+    QHBoxLayout,
+    QMainWindow,
+    QMessageBox,
+    QProgressDialog,
+    QStackedWidget,
+    QWidget,
 )
 
 from app.core.game_process import GameWatcher
@@ -47,7 +51,7 @@ class MainWindow(QMainWindow):
         self._close_timer.setSingleShot(True)
         self._close_timer.timeout.connect(self._force_close)
 
-        self.setWindowTitle('Verthandi')
+        self.setWindowTitle("Verthandi")
         self.resize(settings.ui.window.width, settings.ui.window.height)
         self.setMinimumSize(880, 560)
 
@@ -60,12 +64,22 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
 
         self.main_page = MainPage(
-            base_dir, paths, settings, settings_store,
-            log_bus, server_process, game_watcher,
+            base_dir,
+            paths,
+            settings,
+            settings_store,
+            log_bus,
+            server_process,
+            game_watcher,
         )
         self.settings_page = SettingsPage(
-            base_dir, paths, settings, settings_store,
-            log_bus, log_writer, server_process,
+            base_dir,
+            paths,
+            settings,
+            settings_store,
+            log_bus,
+            log_writer,
+            server_process,
         )
         self.about_page = AboutPage(base_dir, paths, settings)
 
@@ -91,9 +105,10 @@ class MainWindow(QMainWindow):
 
     def _on_settings_changed(self, category: str) -> None:
         self.main_page.refresh_status()
-        if category in ('game_dir', 'paths'):
+        if category in ("game_dir", "paths"):
             self.game_watcher.set_client_dir(
-                self.paths.active_client_dir(self.settings))
+                self.paths.active_client_dir(self.settings)
+            )
             self.game_watcher.refresh()
 
     def _on_request_init(self) -> None:
@@ -112,12 +127,12 @@ class MainWindow(QMainWindow):
             return
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle('退出 Verthandi')
-        box.setText('服务仍在运行，退出将停止服务。\n\n确定退出吗？')
+        box.setWindowTitle("退出 Verthandi")
+        box.setText("服务仍在运行，退出将停止服务。\n\n确定退出吗？")
         box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         box.setDefaultButton(QMessageBox.No)
-        box.button(QMessageBox.Yes).setText('停止并退出')
-        box.button(QMessageBox.No).setText('取消')
+        box.button(QMessageBox.Yes).setText("停止并退出")
+        box.button(QMessageBox.No).setText("取消")
         if box.exec() != QMessageBox.Yes:
             event.ignore()
             return
@@ -127,8 +142,8 @@ class MainWindow(QMainWindow):
     def _begin_close(self) -> None:
         self._closing = True
         self.setEnabled(False)
-        self._close_dialog = QProgressDialog('正在停止服务…', '', 0, 0, self)
-        self._close_dialog.setWindowTitle('退出中')
+        self._close_dialog = QProgressDialog("正在停止服务…", "", 0, 0, self)
+        self._close_dialog.setWindowTitle("退出中")
         self._close_dialog.setCancelButton(None)
         self._close_dialog.setWindowModality(Qt.WindowModal)
         self._close_dialog.setMinimumDuration(0)

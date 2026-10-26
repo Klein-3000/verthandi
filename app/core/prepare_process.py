@@ -13,7 +13,6 @@ from app.core.log_bus import LogBus, LogSource
 from app.core.paths import Paths
 from app.core.settings import Settings
 
-
 CREATE_NEW_CONSOLE = 0x00000010
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 
@@ -27,7 +26,7 @@ class PrepareProcess(QObject):
     """
 
     output_line = Signal(str)
-    finished = Signal(int)        # 退出码；被取消时为 -1
+    finished = Signal(int)  # 退出码；被取消时为 -1
     failed_to_start = Signal(str)
 
     def __init__(self, paths: Paths, settings: Settings, log_bus: LogBus, parent=None):
@@ -51,7 +50,7 @@ class PrepareProcess(QObject):
 
         exe, _version, _auto = find_hoshimi_exe(self.paths, self.settings)
         if not exe.exists():
-            self.failed_to_start.emit(f'找不到 hoshimi.exe：{exe}')
+            self.failed_to_start.emit(f"找不到 hoshimi.exe：{exe}")
             return False
 
         home = self.paths.home_dir(self.settings)
@@ -60,15 +59,19 @@ class PrepareProcess(QObject):
         runtime.mkdir(parents=True, exist_ok=True)
 
         cmd = [
-            str(exe), 'prepare',
-            '--client-dir', str(client_dir),
-            '--home', str(home),
-            '--runtime-dir', str(runtime),
+            str(exe),
+            "prepare",
+            "--client-dir",
+            str(client_dir),
+            "--home",
+            str(home),
+            "--runtime-dir",
+            str(runtime),
         ]
 
         creationflags = 0
         startupinfo = None
-        if sys.platform == 'win32':
+        if sys.platform == "win32":
             creationflags = CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -81,8 +84,8 @@ class PrepareProcess(QObject):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                encoding='utf-8',
-                errors='replace',
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
                 env=os.environ.copy(),
                 cwd=str(exe.parent),
@@ -90,7 +93,7 @@ class PrepareProcess(QObject):
                 startupinfo=startupinfo,
             )
         except OSError as e:
-            self.failed_to_start.emit(f'启动 prepare 失败：{e}')
+            self.failed_to_start.emit(f"启动 prepare 失败：{e}")
             self._proc = None
             return False
 
@@ -121,7 +124,7 @@ class PrepareProcess(QObject):
             return
         try:
             for raw in proc.stdout:
-                text = raw.rstrip('\r\n')
+                text = raw.rstrip("\r\n")
                 if not text:
                     continue
                 self.output_line.emit(text)

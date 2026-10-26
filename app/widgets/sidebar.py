@@ -11,12 +11,12 @@ from PySide6.QtWidgets import (
 
 
 class NavButton(QPushButton):
-    def __init__(self, text: str, icon_text: str = ''):
+    def __init__(self, text: str, icon_text: str = ""):
         super().__init__()
-        self.setText(f'  {icon_text}   {text}' if icon_text else text)
+        self.setText(f"  {icon_text}   {text}" if icon_text else text)
         self.setCheckable(True)
         self.setCursor(Qt.PointingHandCursor)
-        self.setObjectName('NavButton')
+        self.setObjectName("NavButton")
         self.setMinimumHeight(40)
 
 
@@ -27,27 +27,27 @@ class Sidebar(QFrame):
 
     def __init__(self):
         super().__init__()
-        self.setObjectName('Sidebar')
+        self.setObjectName("Sidebar")
         self.setFixedWidth(200)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 16, 12, 16)
         layout.setSpacing(6)
 
-        title = QLabel('Verthandi')
-        title.setObjectName('SidebarTitle')
+        title = QLabel("Verthandi")
+        title.setObjectName("SidebarTitle")
         layout.addWidget(title)
 
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         self._buttons: list[NavButton] = []
 
-        self._add_nav(layout, '主页面', '🏠')
-        self._add_nav(layout, '设置', '⚙')
+        self._add_nav(layout, "主页面", "🏠")
+        self._add_nav(layout, "设置", "⚙")
 
         layout.addStretch(1)
 
-        self._add_nav(layout, '关于', 'ℹ')
+        self._add_nav(layout, "关于", "ℹ")
 
         self._group.idClicked.connect(self.currentChanged.emit)
 

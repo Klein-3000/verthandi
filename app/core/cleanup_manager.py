@@ -35,12 +35,12 @@ class LogInfo:
 def format_size(size_bytes: int) -> str:
     """把字节数转换为人类可读的字符串。"""
     if size_bytes < 1024:
-        return f'{size_bytes} B'
+        return f"{size_bytes} B"
     if size_bytes < 1024 * 1024:
-        return f'{size_bytes / 1024:.1f} KB'
+        return f"{size_bytes / 1024:.1f} KB"
     if size_bytes < 1024 * 1024 * 1024:
-        return f'{size_bytes / (1024 * 1024):.1f} MB'
-    return f'{size_bytes / (1024 * 1024 * 1024):.2f} GB'
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
 
 
 def get_dir_size(path: Path) -> int:
@@ -59,6 +59,7 @@ def get_dir_size(path: Path) -> int:
 
 # ---------- 扫描 ----------
 
+
 def scan_versions(paths: Paths, settings: Settings) -> list[VersionInfo]:
     bin_dir = paths.bin_dir(settings)
     if not bin_dir.exists():
@@ -68,12 +69,12 @@ def scan_versions(paths: Paths, settings: Settings) -> list[VersionInfo]:
     results = []
 
     for d in bin_dir.iterdir():
-        if not d.is_dir() or d.name.startswith('import-'):
+        if not d.is_dir() or d.name.startswith("import-"):
             continue
-        if not (d / 'hoshimi.exe').exists():
+        if not (d / "hoshimi.exe").exists():
             continue
 
-        is_current = (d.name == current_version)
+        is_current = d.name == current_version
         size = get_dir_size(d)
         results.append(VersionInfo(d.name, d, size, is_current))
 
@@ -84,13 +85,13 @@ def scan_versions(paths: Paths, settings: Settings) -> list[VersionInfo]:
 
 def scan_runtime_backups(paths: Paths, settings: Settings) -> list[BackupInfo]:
     runtime = paths.runtime_dir(settings)
-    backup_dir = runtime.parent / 'backup'
+    backup_dir = runtime.parent / "backup"
     if not backup_dir.exists():
         return []
 
     results = []
     for d in backup_dir.iterdir():
-        if not d.is_dir() or not d.name.startswith('runtime-'):
+        if not d.is_dir() or not d.name.startswith("runtime-"):
             continue
         size = get_dir_size(d)
         results.append(BackupInfo(d.name, d, size))
@@ -106,7 +107,7 @@ def scan_logs(paths: Paths, settings: Settings) -> LogInfo:
 
     count = 0
     total_size = 0
-    for f in logs_dir.glob('session-*.log'):
+    for f in logs_dir.glob("session-*.log"):
         if f.is_file():
             count += 1
             try:
@@ -117,6 +118,7 @@ def scan_logs(paths: Paths, settings: Settings) -> LogInfo:
 
 
 # ---------- 删除 ----------
+
 
 def delete_versions(items: list[VersionInfo]) -> None:
     for item in items:
@@ -143,7 +145,7 @@ def delete_logs(
 
     cutoff = datetime.now() - timedelta(days=days) if days > 0 else None
 
-    for f in logs_dir.glob('session-*.log'):
+    for f in logs_dir.glob("session-*.log"):
         if not f.is_file():
             continue
         # 保护当前正在写入的日志

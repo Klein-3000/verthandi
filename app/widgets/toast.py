@@ -9,7 +9,7 @@ class Toast(QLabel):
 
     def __init__(self, text: str, host: QWidget, duration_ms: int = 2000):
         super().__init__(text, host)
-        self.setObjectName('Toast')
+        self.setObjectName("Toast")
         self.setAlignment(Qt.AlignCenter)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -27,7 +27,7 @@ class Toast(QLabel):
         self.move(x, y)
 
     def _fade_out(self) -> None:
-        self._anim = QPropertyAnimation(self, b'windowOpacity', self)
+        self._anim = QPropertyAnimation(self, b"windowOpacity", self)
         self._anim.setDuration(300)
         self._anim.setStartValue(1.0)
         self._anim.setEndValue(0.0)
