@@ -67,7 +67,7 @@ class MainWindow(QMainWindow):
             base_dir, paths, settings, settings_store,
             log_bus, log_writer, server_process,
         )
-        self.about_page = AboutPage(base_dir)
+        self.about_page = AboutPage(base_dir, paths, settings)
 
         for page in (self.main_page, self.settings_page, self.about_page):
             self.stack.addWidget(page)
@@ -80,15 +80,25 @@ class MainWindow(QMainWindow):
         self.sidebar.set_current(0)
 
         self.settings_page.settings_changed.connect(self._on_settings_changed)
+        self.settings_page.request_init.connect(self._on_request_init)
 
     def _on_nav_changed(self, index: int) -> None:
-        if 0 <= index < self.stack.count():
-            self.stack.setCurrentIndex(index)
+        if not (0 <= index < self.stack.count()):
+            return
+        self.stack.setCurrentIndex(index)
+        if self.stack.widget(index) is self.settings_page:
+            self.settings_page.refresh_all()
 
     def _on_settings_changed(self, category: str) -> None:
         self.main_page.refresh_status()
-        self.game_watcher.set_client_dir(
-            self.paths.active_client_dir(self.settings))
+        if category in ('game_dir', 'paths'):
+            self.game_watcher.set_client_dir(
+                self.paths.active_client_dir(self.settings))
+            self.game_watcher.refresh()
+
+    def _on_request_init(self) -> None:
+        self.sidebar.set_current(0)
+        self.main_page._on_prepare_button()
 
     # ---------- 关闭流程 ----------
 

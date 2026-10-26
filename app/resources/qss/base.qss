@@ -338,3 +338,58 @@ QSpinBox::down-button {
 #ToolbarButton[variant="switch"]:hover {
     background: #1d4ed8;
 }
+
+/* ---------- 端口折叠开关 ---------- */
+
+QToolButton#PortToggle {
+    background: transparent;
+    border: none;
+    color: #1e40af;
+    padding: 4px 0;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QToolButton#PortToggle:hover {
+    color: #1d4ed8;
+    text-decoration: underline;
+}
+
+QToolButton#PortToggle::menu-indicator {
+    image: none;
+    width: 0;
+}
+
+/* ---------- QScrollArea ---------- */
+
+QScrollArea {
+    background: #f5f6f8;
+    border: none;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 4px 2px;
+}
+
+QScrollBar::handle:vertical {
+    background: #cbd5e1;
+    border-radius: 4px;
+    min-height: 24px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #94a3b8;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+    background: none;
+}
+
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: none;
+}

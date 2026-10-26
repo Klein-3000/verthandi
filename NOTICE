@@ -1,0 +1,11 @@
+Verthandi
+Copyright 2026 Klein-3000
+
+This product includes software developed by the Verthandi project
+(https://github.com/Klein-3000/verthandi).
+
+Third-party components:
+- PySide6 (Qt for Python), LGPL-3.0
+- pycryptodome, public domain / BSD
+- psutil, BSD-3-Clause
+ \n\n--- NOTICE ---\n\n
