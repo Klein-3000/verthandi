@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QLibraryInfo, Qt, QTranslator
@@ -69,11 +70,31 @@ class VerthandiApplication(QApplication):
 
     def _load_translator(self) -> None:
         """加载 Qt 内置中文翻译，让 QMessageBox、QFileDialog 等自动中文。"""
-        path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
-        if self._translator.load("qtbase_zh_CN", path):
-            self.installTranslator(self._translator)
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            # 打包后，翻译文件通常在 _MEIPASS/PySide6/translations 或 _MEIPASS/translations
+            meipass = Path(sys._MEIPASS)
+            possible_paths = [
+                meipass / "PySide6" / "translations",
+                meipass / "translations",
+            ]
+            for path in possible_paths:
+                if (path / "qtbase_zh_CN.qm").exists():
+                    if self._translator.load("qtbase_zh_CN", str(path)):
+                        self.installTranslator(self._translator)
+                    break
+        else:
+            # 开发环境
+            path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+            if self._translator.load("qtbase_zh_CN", path):
+                self.installTranslator(self._translator)
 
     def _qss_path(self) -> Path:
+        # 如果是 PyInstaller 打包后的环境
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            # 资源文件默认被打包在 _MEIPASS (即 _internal 文件夹) 下
+            return Path(sys._MEIPASS) / "app" / "resources" / "qss" / "base.qss"
+
+        # 开发环境
         return self.base_dir / "app" / "resources" / "qss" / "base.qss"
 
     def _load_qss(self) -> None:
