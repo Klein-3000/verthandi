@@ -80,6 +80,7 @@ class MainWindow(QMainWindow):
             log_bus,
             log_writer,
             server_process,
+            game_watcher,
         )
         self.about_page = AboutPage(base_dir, paths, settings)
 

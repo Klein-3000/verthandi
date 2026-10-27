@@ -66,6 +66,7 @@ class SettingsPage(QWidget):
         log_bus: LogBus,
         log_writer: SessionLogWriter,
         server_process: ServerProcess,
+        game_watcher: GameWatcher,
     ):
         super().__init__()
         self.base_dir = base_dir
@@ -75,6 +76,9 @@ class SettingsPage(QWidget):
         self.log_bus = log_bus
         self.log_writer = log_writer
         self.server_process = server_process
+        self.game_watcher = game_watcher
+        # 监听到游戏运行状态变化时，更新外观按钮的状态
+        self.game_watcher.running_changed.connect(self._on_game_running_changed)
 
         self._port_dirty = False
         self._http_check: PortResult | None = None
@@ -109,6 +113,7 @@ class SettingsPage(QWidget):
         layout.addWidget(self.log_warning_banner)
 
         layout.addWidget(self._build_essential_card())
+        layout.addWidget(self._build_appearance_card())
         layout.addWidget(self._build_behavior_card())
         layout.addWidget(self._build_logging_card())
         layout.addWidget(self._build_cleanup_card())
@@ -285,6 +290,61 @@ class SettingsPage(QWidget):
     def _on_port_toggled(self, checked: bool) -> None:
         self.port_content.setVisible(checked)
         self.port_toggle.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
+
+    # ---------- 修改角色外观 ----------
+
+    def _build_appearance_card(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName("Card")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(16, 16, 16, 16)
+        box.setSpacing(8)
+
+        title = QLabel("角色外观")
+        title.setObjectName("CardTitle")
+        box.addWidget(title)
+
+        row = QHBoxLayout()
+        hint = QLabel("调整游戏内的角色外观（陵光 / 帕尔瓦蒂）。")
+        hint.setObjectName("MutedText")
+        row.addWidget(hint)
+        row.addStretch(1)
+
+        self.appearance_btn = QPushButton("修改外观")
+        self.appearance_btn.setObjectName("ToolbarButton")
+        self.appearance_btn.setProperty("variant", "start")  # 默认绿色
+        self.appearance_btn.clicked.connect(self._on_open_appearance)
+        row.addWidget(self.appearance_btn)
+
+        box.addLayout(row)
+
+        # 初始化一下按钮状态（以防打开设置页时游戏已经在运行）
+        self._apply_appearance_btn_state(self.game_watcher.running)
+
+        return card
+
+    def _on_open_appearance(self) -> None:
+        from app.widgets.appearance_dialog import AppearanceDialog
+        dlg = AppearanceDialog(self.base_dir, self)
+        dlg.exec()
+
+    def _on_game_running_changed(self, running: bool) -> None:
+        self._apply_appearance_btn_state(running)
+
+    def _apply_appearance_btn_state(self, running: bool) -> None:
+        if running:
+            self.appearance_btn.setText("游戏运行中")
+            self.appearance_btn.setEnabled(False)
+            self.appearance_btn.setToolTip("请先退出游戏")
+            self.appearance_btn.setProperty("variant", "busy")  # 变灰
+        else:
+            self.appearance_btn.setText("修改外观")
+            self.appearance_btn.setEnabled(True)
+            self.appearance_btn.setToolTip("")
+            self.appearance_btn.setProperty("variant", "start") # 变绿
+
+        self.appearance_btn.style().unpolish(self.appearance_btn)
+        self.appearance_btn.style().polish(self.appearance_btn)
 
     # ---------- 行为卡片 ----------
 
