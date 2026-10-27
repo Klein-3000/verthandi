@@ -115,6 +115,16 @@ class MainWindow(QMainWindow):
         self.sidebar.set_current(0)
         self.main_page._on_prepare_button()
 
+    def bring_to_front(self) -> None:
+        """把窗口从最小化/后台状态拉到前面（重复启动时由单实例守卫触发）。"""
+        if self._closing:
+            return
+        # 只清最小化位，最大化状态保持不变
+        self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
     # ---------- 关闭流程 ----------
 
     def closeEvent(self, event) -> None:

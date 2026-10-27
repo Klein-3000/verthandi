@@ -11,6 +11,7 @@ from app.core.log_bus import LogBus, LogSource, SessionLogWriter
 from app.core.paths import Paths, detect_base_dir
 from app.core.server_process import ServerProcess, ServerState
 from app.core.settings import SettingsStore
+from app.core.single_instance import SingleInstance, force_foreground
 from app.window import MainWindow
 
 
@@ -54,6 +55,11 @@ class VerthandiApplication(QApplication):
             game_watcher=self.game_watcher,
         )
         self.window.show()
+
+        # 监听端要尽早就绪：第二次双击时它必须已经能接收“置顶”请求。
+        # 必须在 window.show() 之后创建，activated 一到就要 bring_to_front()。
+        self.single_instance = SingleInstance(self)
+        self.single_instance.activated.connect(self._activate_window)
 
         # 窗口已就绪，此时 start 里的第一次 emit 能被 MainPage 收到
         self.game_watcher.start(self.paths.active_client_dir(self.settings))
@@ -112,6 +118,13 @@ class VerthandiApplication(QApplication):
             self.styleHints().setColorScheme(scheme)
         except (AttributeError, TypeError):
             pass
+
+    def _activate_window(self) -> None:
+        """另一个实例刚刚被双击：把本窗口拉到前台。"""
+        self.window.bring_to_front()
+        if not force_foreground(int(self.window.winId())):
+            # 系统拒绝抢前台时至少闪任务栏，别让用户以为双击没反应
+            self.alert(self.window, 1500)
 
     def run(self) -> int:
         code = self.exec()
