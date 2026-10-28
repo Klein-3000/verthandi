@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
 try:
     import psutil
@@ -14,11 +14,7 @@ EXE_NAME = "AetherGazer.exe"
 
 
 def is_game_running(client_dir: Path | None = None) -> bool:
-    """检测 AetherGazer.exe 是否运行。
-
-    - client_dir 为空：按进程名匹配；
-    - 提供 client_dir：额外校验 exe 路径；拿不到路径时保守返回 True。
-    """
+    """检测 AetherGazer.exe 是否运行。"""
     if psutil is None:
         return False
 
@@ -56,8 +52,21 @@ def launch_game(client_dir: Path) -> tuple[bool, str]:
     return True, ""
 
 
+class GameWatcherWorker(QThread):
+    """后台扫描进程的线程，避免 psutil 阻塞主界面。"""
+    result_ready = Signal(bool)
+
+    def __init__(self, client_dir: Path | None, parent=None):
+        super().__init__(parent)
+        self.client_dir = client_dir
+
+    def run(self):
+        res = is_game_running(self.client_dir)
+        self.result_ready.emit(res)
+
+
 class GameWatcher(QObject):
-    """周期性检测游戏进程状态，状态变化时发信号。"""
+    """周期性检测游戏进程状态，使用 QThread 异步执行。"""
 
     running_changed = Signal(bool)
 
@@ -69,27 +78,44 @@ class GameWatcher(QObject):
         self._timer.setInterval(interval_ms)
         self._timer.timeout.connect(self._poll)
 
+        self._worker: GameWatcherWorker | None = None
+        self._force_emit_next = False
+
     @property
     def running(self) -> bool:
         return self._running
 
     def start(self, client_dir: Path | None) -> None:
         self._client_dir = client_dir
-        self._poll(force_emit=True)
+        self._force_emit_next = True
+        self._poll()
         self._timer.start()
 
     def stop(self) -> None:
         self._timer.stop()
+        if self._worker and self._worker.isRunning():
+            self._worker.wait(1000)
 
     def set_client_dir(self, client_dir: Path | None) -> None:
         self._client_dir = client_dir
-        self._poll(force_emit=True)
+        self._force_emit_next = True
+        self._poll()
 
     def refresh(self) -> None:
-        self._poll(force_emit=True)
+        self._force_emit_next = True
+        self._poll()
 
-    def _poll(self, force_emit: bool = False) -> None:
-        current = is_game_running(self._client_dir)
-        if current != self._running or force_emit:
+    def _poll(self) -> None:
+        # 如果上一次扫描还没结束，直接跳过本次，防止线程爆炸
+        if self._worker and self._worker.isRunning():
+            return
+
+        self._worker = GameWatcherWorker(self._client_dir, self)
+        self._worker.result_ready.connect(self._on_poll_finished)
+        self._worker.start()
+
+    def _on_poll_finished(self, current: bool) -> None:
+        if current != self._running or self._force_emit_next:
             self._running = current
             self.running_changed.emit(current)
+        self._force_emit_next = False

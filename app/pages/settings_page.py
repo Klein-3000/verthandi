@@ -37,7 +37,7 @@ from app.core.settings import ClientEntry, Settings, SettingsStore
 from app.widgets.cleanup_dialog import CleanupDialog
 from app.widgets.toast import show_toast
 
-RUNTIME_REQUIRED = ("protocol_lib.json", "runtime.json", "tables.json", "tolua.dll")
+RUNTIME_REQUIRED = ("protocol_map.json", "runtime.json", "tables.json", "tolua.dll")
 
 
 def _scan_versions(bin_dir: Path) -> list[str]:
