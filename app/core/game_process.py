@@ -54,6 +54,7 @@ def launch_game(client_dir: Path) -> tuple[bool, str]:
 
 class GameWatcherWorker(QThread):
     """后台扫描进程的线程，避免 psutil 阻塞主界面。"""
+
     result_ready = Signal(bool)
 
     def __init__(self, client_dir: Path | None, parent=None):

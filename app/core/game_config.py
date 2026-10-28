@@ -8,7 +8,14 @@ from pathlib import Path
 def get_config_path() -> Path:
     """获取 Windows 下的 AetherGazer 配置文件路径。"""
     user_home = Path(os.environ.get("USERPROFILE", Path.home()))
-    return user_home / "AppData" / "LocalLow" / "yongshi" / "AetherGazer" / "sys_config.ini"
+    return (
+        user_home
+        / "AppData"
+        / "LocalLow"
+        / "yongshi"
+        / "AetherGazer"
+        / "sys_config.ini"
+    )
 
 
 def read_config() -> dict | None:
@@ -26,7 +33,10 @@ def update_localization(is_localization: bool) -> tuple[bool, str]:
     """修改外观配置。返回 (是否成功, 错误信息)。"""
     path = get_config_path()
     if not path.exists():
-        return False, "未找到游戏配置文件，可能游戏尚未运行过。请先启动一次游戏，生成配置后再来修改。"
+        return (
+            False,
+            "未找到游戏配置文件，可能游戏尚未运行过。请先启动一次游戏，生成配置后再来修改。",
+        )
 
     try:
         # 读取现有内容，保留其他字段

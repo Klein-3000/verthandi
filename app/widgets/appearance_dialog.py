@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QVBoxLayout,
-    QWidget,
 )
 
 from app.core import game_config
@@ -61,12 +60,12 @@ class AppearanceDialog(QDialog):
         """)
         status_layout.addWidget(self.status_tag)
 
-        status_layout.addStretch(1) # 把帮助按钮推到最右边
+        status_layout.addStretch(1)  # 把帮助按钮推到最右边
 
         # 新增：帮助按钮（圆圈带 ?）
         self.help_btn = QPushButton("?")
         self.help_btn.setCursor(Qt.PointingHandCursor)
-        self.help_btn.setFixedSize(24, 24) # 固定大小，保证是正圆
+        self.help_btn.setFixedSize(24, 24)  # 固定大小，保证是正圆
         self.help_btn.setStyleSheet("""
             QPushButton {
                 background-color: #f3f4f6;
@@ -104,7 +103,9 @@ class AppearanceDialog(QDialog):
         self.img1_label = QLabel()
         self.img1_label.setFixedSize(200, 350)
         self.img1_label.setAlignment(Qt.AlignCenter)
-        self.img1_label.setStyleSheet("background-color: #f3f4f6; border-radius: 8px; border: 1px solid #e5e7eb;")
+        self.img1_label.setStyleSheet(
+            "background-color: #f3f4f6; border-radius: 8px; border: 1px solid #e5e7eb;"
+        )
         v1.addWidget(self.img1_label)
         lbl1 = QLabel("陵光")
         lbl1.setAlignment(Qt.AlignCenter)
@@ -117,7 +118,9 @@ class AppearanceDialog(QDialog):
         self.img2_label = QLabel()
         self.img2_label.setFixedSize(200, 350)
         self.img2_label.setAlignment(Qt.AlignCenter)
-        self.img2_label.setStyleSheet("background-color: #f3f4f6; border-radius: 8px; border: 1px solid #e5e7eb;")
+        self.img2_label.setStyleSheet(
+            "background-color: #f3f4f6; border-radius: 8px; border: 1px solid #e5e7eb;"
+        )
         v2.addWidget(self.img2_label)
         lbl2 = QLabel("帕尔瓦蒂")
         lbl2.setAlignment(Qt.AlignCenter)
@@ -140,7 +143,7 @@ class AppearanceDialog(QDialog):
 
         self.btn_save = QPushButton("保存并应用")
         self.btn_save.setObjectName("ToolbarButton")
-        self.btn_save.setProperty("variant", "switch") # 蓝色焦点按钮
+        self.btn_save.setProperty("variant", "switch")  # 蓝色焦点按钮
         self.btn_save.setEnabled(False)
         self.btn_save.clicked.connect(self._on_save)
         bottom.addWidget(self.btn_save)
@@ -166,13 +169,17 @@ class AppearanceDialog(QDialog):
         if pix1.isNull():
             self.img1_label.setText("图片缺失")
         else:
-            self.img1_label.setPixmap(pix1.scaled(200, 350, Qt.IgnoreAspectRatio, Qt.SmoothTransformation))
+            self.img1_label.setPixmap(
+                pix1.scaled(200, 350, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            )
 
         pix2 = QPixmap(str(self._get_image_path(f"{prefix}2.png")))
         if pix2.isNull():
             self.img2_label.setText("图片缺失")
         else:
-            self.img2_label.setPixmap(pix2.scaled(200, 350, Qt.IgnoreAspectRatio, Qt.SmoothTransformation))
+            self.img2_label.setPixmap(
+                pix2.scaled(200, 350, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            )
 
     def _load_current_config(self):
         config = game_config.read_config()
@@ -222,12 +229,12 @@ class AppearanceDialog(QDialog):
         """)
 
     def _on_switch_changed(self, index: int):
-        self._current_selection = (index == 1)
+        self._current_selection = index == 1
         self._update_preview(self._current_selection)
         self._update_save_button()
 
     def _update_save_button(self):
-        has_changes = (self._current_selection != self._original_state)
+        has_changes = self._current_selection != self._original_state
         self.btn_save.setEnabled(has_changes)
 
     def _on_save(self):
@@ -238,17 +245,20 @@ class AppearanceDialog(QDialog):
             self._original_state = is_cool
             self._update_status_tag(self._original_state)
             self._update_save_button()
-            QMessageBox.information(self, "成功", "外观配置已成功保存，重新进入游戏即可生效。")
+            QMessageBox.information(
+                self, "成功", "外观配置已成功保存，重新进入游戏即可生效。"
+            )
         else:
             QMessageBox.warning(self, "保存失败", err_msg)
 
     def closeEvent(self, event):
         if self._current_selection != self._original_state:
             reply = QMessageBox.question(
-                self, "未保存的更改",
+                self,
+                "未保存的更改",
                 "你有未保存的外观修改，确定要放弃修改并关闭吗？",
                 QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.No,
             )
             if reply != QMessageBox.Yes:
                 event.ignore()
@@ -260,5 +270,5 @@ class AppearanceDialog(QDialog):
             self,
             "外观修改提示",
             "修改角色外观并非对所有角色生效。\n\n"
-            "例如：陵光的外观保持不变，而帕尔瓦蒂的外观会发生变化。"
+            "例如：陵光的外观保持不变，而帕尔瓦蒂的外观会发生变化。",
         )

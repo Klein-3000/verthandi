@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from app.core import cleanup_manager as cm
 from app.core import hoshimi_importer
 from app.core.client_state import client_fingerprint
+from app.core.game_process import GameWatcher
 from app.core.hoshimi_finder import version_key
 from app.core.log_bus import LogBus, LogSource, SessionLogWriter
 from app.core.paths import Paths
@@ -325,6 +326,7 @@ class SettingsPage(QWidget):
 
     def _on_open_appearance(self) -> None:
         from app.widgets.appearance_dialog import AppearanceDialog
+
         dlg = AppearanceDialog(self.base_dir, self)
         dlg.exec()
 
@@ -341,7 +343,7 @@ class SettingsPage(QWidget):
             self.appearance_btn.setText("修改外观")
             self.appearance_btn.setEnabled(True)
             self.appearance_btn.setToolTip("")
-            self.appearance_btn.setProperty("variant", "start") # 变绿
+            self.appearance_btn.setProperty("variant", "start")  # 变绿
 
         self.appearance_btn.style().unpolish(self.appearance_btn)
         self.appearance_btn.style().polish(self.appearance_btn)

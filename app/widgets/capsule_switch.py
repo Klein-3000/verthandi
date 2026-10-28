@@ -25,7 +25,7 @@ class CapsuleSwitch(QWidget):
     def __init__(self, items: list[str], parent=None):
         super().__init__(parent)
         self.setObjectName("capsuleRoot")
-        self.setFixedHeight(40) # 稍微调小一点，适应常规窗口
+        self.setFixedHeight(40)  # 稍微调小一点，适应常规窗口
         self.setAttribute(Qt.WA_StyledBackground, True)  # QSS 背景生效
 
         self._pad = 4
@@ -33,9 +33,7 @@ class CapsuleSwitch(QWidget):
         self._btns: list[QPushButton] = []
 
         # ① 容器：圆角背景（半径 = 高度/2，形成胶囊）
-        self.setStyleSheet(
-            "#capsuleRoot { background:#eceef3; border-radius:20px; }"
-        )
+        self.setStyleSheet("#capsuleRoot { background:#eceef3; border-radius:20px; }")
 
         # ② 滑块：圆角 + 阴影
         self._slider = QWidget(self)
@@ -113,7 +111,11 @@ class CapsuleSwitch(QWidget):
             b.setChecked(i == index)
 
         target = self._slot_rect(index)
-        if animate and self.isVisible() and self._anim.state() != QAbstractAnimation.Running:
+        if (
+            animate
+            and self.isVisible()
+            and self._anim.state() != QAbstractAnimation.Running
+        ):
             self._anim.stop()
             self._anim.setStartValue(self._slider.geometry())
             self._anim.setEndValue(target)
