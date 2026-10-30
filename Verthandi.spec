@@ -8,6 +8,9 @@ datas = [
     ('app/resources', 'app/resources'),
 ]
 
+# exe 文件自身的图标：存在才嵌入，缺失时 PyInstaller 用默认图标
+exe_icon = Path(SPECPATH) / 'verthandi.ico'
+
 # 2. 只取中文翻译文件，不取 PySide6 底下的所有无关文件
 pyside_dir = Path(PySide6.__file__).parent
 translation_file = pyside_dir / 'translations' / 'qtbase_zh_CN.qm'
@@ -47,6 +50,7 @@ exe = EXE(
     upx=True,
     console=False,
     disable_windowed_traceback=False,
+    icon=str(exe_icon) if exe_icon.exists() else None,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,

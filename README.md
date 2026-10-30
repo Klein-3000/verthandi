@@ -1,4 +1,4 @@
-# Verthandi (星见)
+# Verthandi (薇儿丹蒂)
 
 > Hoshimi 服务端的现代化桌面控制台。
 
@@ -70,6 +70,16 @@ Verthandi/
 └── _internal/             # 运行库（请勿移动或删除）
 ```
 
+### 🎨 自定义图标
+
+程序窗口图标按以下顺序查找，任何一步失败都会自动降级到下一步（不会报错）：
+
+1. `Verthandi.exe` 同目录下的 `verthandi.ico` —— **用户自定义**，替换此文件即可换图标；
+2. `_internal/app/resources/icon.ico` —— 随程序分发的内置图标；
+3. 都没有时使用系统默认图标。
+
+`verthandi.ico` 修改后**下次启动生效**，无需重新打包。
+
 ---
 
 ## 🛠️ 常见问题 (FAQ)
@@ -104,7 +114,7 @@ uv run verthandi.py
 uv pip install pyinstaller
 
 # 进行编译
-uv run pyinstaller verthandi.spec
+uv run pyinstaller Verthandi.spec
 ```
 ---
 
