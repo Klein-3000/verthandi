@@ -5,10 +5,23 @@ from pathlib import Path
 
 
 def detect_base_dir() -> Path:
-    """portable 根目录：打包后取 exe 所在目录，开发时取仓库根。"""
+    """portable 根目录：打包后取 exe 所在目录，开发时取仓库根（可写）。"""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent.parent.parent
+
+
+def detect_resource_dir() -> Path:
+    """只读资源根：打包后是 exe 同级的 _internal（sys._MEIPASS），开发时是仓库根。"""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if getattr(sys, "frozen", False) and meipass:
+        return Path(meipass).resolve()
+    return Path(__file__).resolve().parent.parent.parent
+
+
+def resource_path(*parts: str) -> Path:
+    """拼接随程序分发的只读资源路径（QSS、内置图标、许可证等）。"""
+    return detect_resource_dir().joinpath(*parts)
 
 
 class Paths:

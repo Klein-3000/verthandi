@@ -6,9 +6,10 @@ from pathlib import Path
 from PySide6.QtCore import QLibraryInfo, Qt, QTimer, QTranslator
 from PySide6.QtWidgets import QApplication
 
+from app.core.app_icon import load_app_icon
 from app.core.game_process import GameWatcher
 from app.core.log_bus import LogBus, LogSource, SessionLogWriter
-from app.core.paths import Paths, detect_base_dir
+from app.core.paths import Paths, detect_base_dir, resource_path
 from app.core.server_process import ServerProcess, ServerState
 from app.core.settings import SettingsStore
 from app.core.single_instance import SingleInstance, force_foreground
@@ -36,6 +37,11 @@ class VerthandiApplication(QApplication):
         self.setOrganizationName("Verthandi")
         self.setApplicationVersion("0.1.0")
 
+        # 图标缺失不算错误：None 时留给 Qt 的默认图标
+        self._app_icon = load_app_icon()
+        if self._app_icon is not None:
+            self.setWindowIcon(self._app_icon)
+
         self._translator = QTranslator(self)
         self._load_translator()
 
@@ -52,6 +58,9 @@ class VerthandiApplication(QApplication):
             server_process=self.server_process,
             game_watcher=self.game_watcher,
         )
+        # QApplication 的窗口图标是默认值，显式再设一次，保证标题栏与任务栏一致
+        if self._app_icon is not None:
+            self.window.setWindowIcon(self._app_icon)
 
         # 1. 先让窗口显示出来（秒出）
         self.window.show()
@@ -95,9 +104,7 @@ class VerthandiApplication(QApplication):
                 self.installTranslator(self._translator)
 
     def _qss_path(self) -> Path:
-        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-            return Path(sys._MEIPASS) / "app" / "resources" / "qss" / "base.qss"
-        return self.base_dir / "app" / "resources" / "qss" / "base.qss"
+        return resource_path("app", "resources", "qss", "base.qss")
 
     def _load_qss(self) -> None:
         path = self._qss_path()
