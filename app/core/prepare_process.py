@@ -44,7 +44,8 @@ class PrepareProcess(QObject):
     def running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
-    def start(self, client_dir: Path) -> bool:
+    def start(self, client_dir: Path, runtime_dir: Path) -> bool:
+        """runtime_dir 指向 staging 目录：prepare 只往临时目录写，正式目录不受影响。"""
         if self.running:
             return False
 
@@ -54,9 +55,8 @@ class PrepareProcess(QObject):
             return False
 
         home = self.paths.home_dir(self.settings)
-        runtime = self.paths.runtime_dir(self.settings)
         home.mkdir(parents=True, exist_ok=True)
-        runtime.mkdir(parents=True, exist_ok=True)
+        runtime_dir.mkdir(parents=True, exist_ok=True)
 
         cmd = [
             str(exe),
@@ -66,7 +66,7 @@ class PrepareProcess(QObject):
             "--home",
             str(home),
             "--runtime-dir",
-            str(runtime),
+            str(runtime_dir),
         ]
 
         creationflags = 0

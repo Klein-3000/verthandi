@@ -14,6 +14,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from app.core.hoshimi_finder import find_hoshimi_exe
 from app.core.log_bus import LogBus, LogSource
 from app.core.paths import Paths
+from app.core.runtime_layout import resolve_runtime
 from app.core.settings import Settings
 
 # ---------- Windows 常量 ----------
@@ -137,7 +138,7 @@ class ServerProcess(QObject):
             return False
 
         home = self.paths.home_dir(self.settings)
-        runtime = self.paths.runtime_dir(self.settings)
+        runtime = resolve_runtime(self.paths, self.settings).directory
         home.mkdir(parents=True, exist_ok=True)
 
         cmd = [

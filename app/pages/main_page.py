@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import shutil
-from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QCheckBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -25,6 +23,16 @@ from app.core.log_bus import LogBus, LogSource
 from app.core.paths import Paths
 from app.core.preflight import CheckItem, Severity, run_preflight
 from app.core.prepare_process import PrepareProcess
+from app.core.runtime_layout import (
+    UNKNOWN_VERSION,
+    RuntimeRef,
+    RuntimeSwapError,
+    create_staging,
+    finalize,
+    manifest_path,
+    read_manifest,
+    resolve_runtime,
+)
 from app.core.server_process import ServerProcess, ServerState
 from app.core.settings import ClientEntry, Settings, SettingsStore
 from app.core.switch_client import SwitchError, SwitchOperation
@@ -56,7 +64,7 @@ class MainPage(QWidget):
         self._preparing = False
         self._prep: PrepareProcess | None = None
         self._prep_dialog: PrepareDialog | None = None
-        self._last_backup_dir: Path | None = None
+        self._pending: tuple[RuntimeRef, Path] | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -257,14 +265,23 @@ class MainPage(QWidget):
         else:
             version_text = "—"
         home = self.paths.home_dir(s)
-        runtime = self.paths.runtime_dir(s)
+        ref = resolve_runtime(self.paths, s)
+        manifest = read_manifest(self.paths, s, ref) if ref.exists else None
+        if ref.version == UNKNOWN_VERSION:
+            runtime_text = "—（尚未安装 hoshimi）"
+        elif not ref.exists:
+            runtime_text = f"{ref.directory}（未初始化）"
+        elif manifest is not None and manifest.prepared_at:
+            runtime_text = f"{ref.directory}（准备于 {manifest.prepared_label}）"
+        else:
+            runtime_text = f"{ref.directory}（无初始化记录）"
         ports_text = f"HTTP {s.server.http_port} / 游戏 {s.server.game_port}（TCP+UDP）"
 
         self._status_values["client"].setText(client_text)
         self._status_values["connection"].setText(connection_text)
         self._status_values["version"].setText(version_text)
         self._status_values["home"].setText(str(home))
-        self._status_values["runtime"].setText(str(runtime))
+        self._status_values["runtime"].setText(runtime_text)
         self._status_values["ports"].setText(ports_text)
 
         badge = {
@@ -446,7 +463,7 @@ class MainPage(QWidget):
         return True
 
     def _confirm_prepare(self, client_dir: Path) -> bool:
-        runtime = self.paths.runtime_dir(self.settings)
+        ref = resolve_runtime(self.paths, self.settings)
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Warning)
         box.setWindowTitle("初始化运行文件")
@@ -456,8 +473,9 @@ class MainPage(QWidget):
         )
         box.setInformativeText(
             f"游戏目录：{client_dir}\n"
-            f"运行文件：{runtime}\n\n"
-            "如果 runtime 已存在，将先备份到 backup/ 目录。"
+            f"hoshimi 版本：{ref.version}\n"
+            f"运行文件：{ref.directory}\n\n"
+            "初始化先写入临时目录，完成后再整体替换；失败或取消不会影响现有运行文件。"
         )
         start = box.addButton("开始初始化", QMessageBox.AcceptRole)
         box.addButton("取消", QMessageBox.RejectRole)
@@ -465,66 +483,24 @@ class MainPage(QWidget):
         box.exec()
         return box.clickedButton() is start
 
-    def _backup_runtime_before_prepare(self) -> tuple[bool, Path | None]:
-        """返回 (ok, backup_dir)。
-        - ok=False: 备份失败（已弹错）
-        - ok=True, backup_dir=None: 无 runtime，无需备份
-        - ok=True, backup_dir=Path: 备份成功
-        """
-        runtime = self.paths.runtime_dir(self.settings)
-        if not runtime.exists():
-            return True, None
-
-        parent = runtime.parent
-        backup_root = parent / "backup"
-        version = self.settings.prepare.last_prepared_version or "unknown"
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        backup_dir = backup_root / f"runtime-{version}-{ts}"
-
-        try:
-            backup_root.mkdir(parents=True, exist_ok=True)
-            try:
-                runtime.rename(backup_dir)
-            except OSError:
-                shutil.move(str(runtime), str(backup_dir))
-            try:
-                (backup_dir / "version.txt").write_text(
-                    version + "\n", encoding="utf-8"
-                )
-            except OSError:
-                pass
-        except OSError as e:
-            QMessageBox.critical(
-                self,
-                "无法备份旧运行文件",
-                f"备份旧 runtime 失败，初始化已取消。\n\n{e}",
-            )
-            return False, None
-
-        self.log_bus.emit_line(
-            LogSource.APP,
-            f"旧运行文件已备份：{backup_dir}",
-            "info",
-        )
-        return True, backup_dir
-
     def _start_prepare(self, client_dir: Path) -> None:
-        self._preparing = True
-        self._apply_prepare_state()
-
-        ok, backup_dir = self._backup_runtime_before_prepare()
-        if not ok:
-            self._preparing = False
-            self._apply_prepare_state()
+        ref = resolve_runtime(self.paths, self.settings)
+        try:
+            staging = create_staging(self.paths, self.settings, ref.version)
+        except OSError as e:
+            QMessageBox.critical(self, "无法初始化", f"无法创建临时目录：\n{e}")
             return
 
-        self._last_backup_dir = backup_dir
+        self._preparing = True
+        self._pending = (ref, staging)
+        self._apply_prepare_state()
 
         self._prep = PrepareProcess(self.paths, self.settings, self.log_bus, self)
         self._prep.finished.connect(self._on_prepare_finished)
         self._prep.failed_to_start.connect(self._on_prepare_failed)
 
-        if not self._prep.start(client_dir):
+        if not self._prep.start(client_dir, staging):
+            self._discard_pending()
             self._on_prepare_failed("无法启动 prepare 进程")
             return
 
@@ -535,127 +511,73 @@ class MainPage(QWidget):
         self._preparing = False
         self._apply_prepare_state()
 
-        if code == 0:
-            version_info = self.server_process.version()
-            version = self.settings.server.version or (
-                version_info[0] if version_info else ""
-            )
-            client_dir = self.paths.active_client_dir(self.settings)
-            self.settings.prepare.last_prepared_version = version
-            self.settings.prepare.last_prepared_at = datetime.now().isoformat(
-                timespec="seconds"
-            )
-            self.settings.prepare.client_fingerprint = client_fingerprint(client_dir)
-            self.settings_store.save(self.settings)
-            self.log_bus.emit_line(LogSource.APP, "初始化完成", "info")
-            self._last_backup_dir = None
-            self.refresh_status()
+        pending = self._pending
+        self._pending = None
+        if pending is None:
             return
+        ref, staging = pending
 
-        self._handle_prepare_failure(code)
-
-    def _handle_prepare_failure(self, code: int) -> None:
-        backup_dir = self._last_backup_dir
-        self._last_backup_dir = None
-
-        if backup_dir is None or not backup_dir.exists():
+        if code != 0:
+            shutil.rmtree(staging, ignore_errors=True)
             if code == -1:
-                self.log_bus.emit_line(
-                    LogSource.APP, "初始化已取消，runtime 可能不完整", "warning"
-                )
+                self.log_bus.emit_line(LogSource.APP, "初始化已取消", "warning")
                 QMessageBox.warning(
                     self,
                     "初始化已取消",
-                    "初始化被取消，runtime 可能不完整。\n请重新执行初始化后再启动服务。",
+                    "初始化被取消，现有运行文件未受影响。",
                 )
             else:
+                self.log_bus.emit_line(
+                    LogSource.APP, f"初始化失败，退出码 {code}", "error"
+                )
                 QMessageBox.critical(
                     self,
                     "初始化失败",
-                    f"hoshimi prepare 退出码 {code}。\n请查看日志面板。",
+                    f"hoshimi prepare 退出码 {code}。\n"
+                    "现有运行文件未受影响，详情见日志面板。",
                 )
             return
 
-        reason = "初始化被取消" if code == -1 else f"初始化失败（退出码 {code}）"
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("初始化未完成")
-        box.setText(f"{reason}。")
-        box.setInformativeText(
-            "当前 runtime 可能不完整。\n\n"
-            f"此前的运行文件已备份到：\n{backup_dir}\n\n"
-            "是否恢复此前的运行文件？"
-        )
-        restore_btn = box.addButton("恢复旧运行文件", QMessageBox.AcceptRole)
-        box.addButton("保留当前并关闭", QMessageBox.RejectRole)
-        box.setDefaultButton(restore_btn)
-        box.exec()
-
-        if box.clickedButton() is restore_btn:
-            self._restore_backup(backup_dir)
-        else:
-            self.log_bus.emit_line(
-                LogSource.APP,
-                f"保留不完整的 runtime，备份仍在 {backup_dir}",
-                "warning",
-            )
-
-    def _restore_backup(self, backup_dir: Path) -> None:
-        runtime = self.paths.runtime_dir(self.settings)
-        parent = runtime.parent
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        failed_dir = parent / "backup" / f"runtime-failed-{ts}"
-
+        client_dir = self.paths.active_client_dir(self.settings)
         try:
-            failed_dir.parent.mkdir(parents=True, exist_ok=True)
-            if runtime.exists():
-                try:
-                    runtime.rename(failed_dir)
-                except OSError:
-                    shutil.move(str(runtime), str(failed_dir))
-            try:
-                backup_dir.rename(runtime)
-            except OSError:
-                shutil.move(str(backup_dir), str(runtime))
-        except OSError as e:
+            finalize(
+                ref,
+                staging,
+                target_manifest=manifest_path(self.paths, self.settings, ref),
+                client_dir=client_dir,
+                fingerprint=client_fingerprint(client_dir),
+            )
+        except RuntimeSwapError as e:
+            self.log_bus.emit_line(LogSource.APP, str(e), "error")
             QMessageBox.critical(
                 self,
-                "恢复失败",
-                f"无法恢复旧运行文件：\n{e}\n\n旧备份仍在：{backup_dir}",
+                "初始化未完成",
+                f"{e}\n\n旧的运行文件未被替换。"
+                + (f"\n临时目录保留在：\n{e.staging}" if e.staging else ""),
             )
             return
 
         self.log_bus.emit_line(
-            LogSource.APP,
-            f"已恢复旧运行文件（不完整的 runtime 保留在 {failed_dir}）",
-            "info",
+            LogSource.APP, f"初始化完成：{ref.version} → {ref.directory}", "info"
         )
         self.refresh_status()
 
     def _on_prepare_failed(self, message: str) -> None:
         self._preparing = False
         self._apply_prepare_state()
+        self._discard_pending()
 
-        backup_dir = self._last_backup_dir
-        self._last_backup_dir = None
-
-        if backup_dir is not None and backup_dir.exists():
-            runtime = self.paths.runtime_dir(self.settings)
-            try:
-                if not runtime.exists():
-                    try:
-                        backup_dir.rename(runtime)
-                    except OSError:
-                        shutil.move(str(backup_dir), str(runtime))
-                    self.log_bus.emit_line(
-                        LogSource.APP,
-                        "初始化启动失败，已自动恢复旧运行文件",
-                        "warning",
-                    )
-            except OSError as e:
-                message += f"\n\n无法恢复旧运行文件：{e}\n备份位置：{backup_dir}"
-
+        self.log_bus.emit_line(LogSource.APP, message, "error")
         QMessageBox.critical(self, "初始化失败", message)
+
+    def _discard_pending(self) -> None:
+        """丢弃未完成的临时目录；正式目录从未被碰过，所以这里没有"恢复"这一步。"""
+        pending = self._pending
+        self._pending = None
+        if pending is None:
+            return
+        _ref, staging = pending
+        shutil.rmtree(staging, ignore_errors=True)
 
     def _apply_prepare_state(self) -> None:
         if self._preparing:
@@ -969,18 +891,10 @@ class MainPage(QWidget):
         box.exec()
 
     def _confirm_preflight_warnings(self, warnings: list[CheckItem]) -> bool:
-        filtered: list[CheckItem] = []
-        show_dismiss_box = False
-        for w in warnings:
-            if w.id == "prepare-unknown" and self.settings.prepare.warning_dismissed_at:
-                continue
-            if w.id == "prepare-unknown":
-                show_dismiss_box = True
-            filtered.append(w)
-        if not filtered:
+        if not warnings:
             return True
 
-        short = "\n".join(f"• {i.label}：{i.message}" for i in filtered)
+        short = "\n".join(f"• {i.label}：{i.message}" for i in warnings)
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Warning)
         box.setWindowTitle("启动服务")
@@ -993,19 +907,7 @@ class MainPage(QWidget):
         box.setDefaultButton(QMessageBox.No)
         box.button(QMessageBox.Yes).setText("仍要启动")
         box.button(QMessageBox.No).setText("取消")
-
-        dismiss_check: QCheckBox | None = None
-        if show_dismiss_box:
-            dismiss_check = QCheckBox("不再提示这条警告")
-            box.setCheckBox(dismiss_check)
-
-        ok = box.exec() == QMessageBox.Yes
-        if ok and dismiss_check is not None and dismiss_check.isChecked():
-            self.settings.prepare.warning_dismissed_at = datetime.now().isoformat(
-                timespec="seconds"
-            )
-            self.settings_store.save(self.settings)
-        return ok
+        return box.exec() == QMessageBox.Yes
 
     # ---------- 服务状态 / 游戏状态 ----------
 

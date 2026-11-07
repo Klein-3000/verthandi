@@ -33,12 +33,18 @@ from app.core.hoshimi_finder import version_key
 from app.core.log_bus import LogBus, LogSource, SessionLogWriter
 from app.core.paths import Paths
 from app.core.port_check import PortResult, check_port
+from app.core.runtime_layout import (
+    MODE_CUSTOM,
+    MODE_PER_VERSION,
+    read_manifest,
+    resolve_runtime,
+    runtime_root,
+    validate_runtime,
+)
 from app.core.server_process import ServerProcess, ServerState
 from app.core.settings import ClientEntry, Settings, SettingsStore
 from app.widgets.cleanup_dialog import CleanupDialog
 from app.widgets.toast import show_toast
-
-RUNTIME_REQUIRED = ("protocol_map.json", "runtime.json", "tables.json", "tolua.dll")
 
 
 def _scan_versions(bin_dir: Path) -> list[str]:
@@ -199,7 +205,7 @@ class SettingsPage(QWidget):
         self.change_runtime_btn.setObjectName("ToolbarButton")
         self.change_runtime_btn.clicked.connect(self._on_change_runtime_dir)
         row = QHBoxLayout()
-        k = QLabel("runtime 目录")
+        k = QLabel("runtime 根目录")
         k.setObjectName("StatusKey")
         k.setFixedWidth(110)
         row.addWidget(k)
@@ -519,16 +525,16 @@ class SettingsPage(QWidget):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             versions = cm.scan_versions(self.paths, self.settings)
-            backups = cm.scan_runtime_backups(self.paths, self.settings)
+            runtimes = cm.scan_runtimes(self.paths, self.settings)
             log_info = cm.scan_logs(self.paths, self.settings)
 
             total = sum(v.size_bytes for v in versions)
-            total += sum(b.size_bytes for b in backups)
+            total += sum(r.size_bytes for r in runtimes)
             total += log_info.total_size_bytes
 
             self.disk_usage_label.setText(
                 f"当前占用：约 {cm.format_size(total)}"
-                f"（版本 {len(versions)} 个，备份 {len(backups)} 个，日志 {log_info.count} 个）"
+                f"（版本 {len(versions)} 个，runtime {len(runtimes)} 项，日志 {log_info.count} 个）"
             )
 
             # 判断是否要显示日志警告
@@ -558,9 +564,12 @@ class SettingsPage(QWidget):
         home_tag = "（默认）" if s.paths.home_dir == "home" else "（自定义）"
         self.home_dir_label.setText(f"{home}  {home_tag}")
 
-        runtime = self.paths.runtime_dir(s)
-        rt_tag = "（默认）" if s.paths.runtime_dir == "runtime" else "（自定义）"
-        self.runtime_dir_label.setText(f"{runtime}  {rt_tag}")
+        ref = resolve_runtime(self.paths, s)
+        if ref.is_custom:
+            rt_text = f"{ref.directory}  （自定义，不按版本）"
+        else:
+            rt_text = f"{runtime_root(self.paths, s)}  （按版本，当前 {ref.version}）"
+        self.runtime_dir_label.setText(rt_text)
 
         self.http_spin.blockSignals(True)
         self.http_spin.setValue(s.server.http_port)
@@ -656,10 +665,11 @@ class SettingsPage(QWidget):
         self._check_fingerprint_after_change()
 
     def _check_fingerprint_after_change(self) -> None:
-        runtime = self.paths.runtime_dir(self.settings)
-        if not runtime.exists():
+        ref = resolve_runtime(self.paths, self.settings)
+        if not ref.exists:
             return
-        stored = self.settings.prepare.client_fingerprint
+        manifest = read_manifest(self.paths, self.settings, ref)
+        stored = manifest.client_fingerprint if manifest else ""
         if not stored:
             return
         current = client_fingerprint(self.paths.active_client_dir(self.settings))
@@ -696,23 +706,7 @@ class SettingsPage(QWidget):
 
         self._refresh_version_combo()
         self.settings_changed.emit("version")
-
-        self._check_prepare_after_version(new_version)
-
-    def _check_prepare_after_version(self, new_version: str) -> None:
-        runtime = self.paths.runtime_dir(self.settings)
-        if not runtime.exists():
-            return
-        prepared = self.settings.prepare.last_prepared_version
-        if not prepared or prepared == new_version:
-            return
-
-        self._prompt_init(
-            "hoshimi 版本已切换",
-            f"hoshimi 版本已从 {prepared} 切换到 {new_version}。\n"
-            f"当前 runtime 由 {prepared} 准备，版本不一致，建议重新初始化。\n"
-            f"未重新初始化时，启动服务可能出现异常。",
-        )
+        # runtime 目录由版本派生，切版本即切目录，不再需要"版本不一致"提示
 
     # ---------- 导入 hoshimi ----------
 
@@ -918,30 +912,59 @@ class SettingsPage(QWidget):
         self.settings_changed.emit("paths")
 
     def _on_change_runtime_dir(self) -> None:
-        current = self.paths.runtime_dir(self.settings)
-        path = QFileDialog.getExistingDirectory(
-            self,
-            "选择 runtime 目录",
-            str(current) if current.exists() else str(self.base_dir),
-        )
+        ref = resolve_runtime(self.paths, self.settings)
+        start = runtime_root(self.paths, self.settings)
+        if not start.exists():
+            start = ref.directory.parent if ref.directory.parent.exists() else self.base_dir
+
+        path = QFileDialog.getExistingDirectory(self, "选择 runtime 目录", str(start))
         if not path:
             return
         new_path = Path(path).resolve()
-        if new_path == current:
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("runtime 存放方式")
+        box.setText("这个目录要怎么用？")
+        box.setInformativeText(
+            f"{new_path}\n\n"
+            "• 按版本：作为根目录，每个 hoshimi 版本各占一个子目录，切版本即切 runtime（推荐）\n"
+            "• 固定目录：所有版本共用这一个 runtime 目录，切换版本后需要重新初始化"
+        )
+        root_btn = box.addButton("作为根目录（按版本）", QMessageBox.AcceptRole)
+        custom_btn = box.addButton("作为固定的 runtime 目录", QMessageBox.ActionRole)
+        box.addButton("取消", QMessageBox.RejectRole)
+        box.setDefaultButton(root_btn)
+        box.exec()
+        clicked = box.clickedButton()
+
+        if clicked is root_btn:
+            self.settings.paths.runtime_root = self.paths.relativize(new_path)
+            self.settings.paths.runtime_mode = MODE_PER_VERSION
+            message = f"runtime 根目录已更换：{new_path}"
+        elif clicked is custom_btn:
+            try:
+                non_empty = any(new_path.iterdir())
+            except OSError:
+                non_empty = False
+            if non_empty:
+                complete, missing = validate_runtime(new_path)
+                if not complete:
+                    QMessageBox.information(
+                        self,
+                        "目录可能不是完整的 runtime",
+                        "缺少：\n"
+                        + "、".join(missing)
+                        + "\n\n如果这是新目录，请在使用前执行「初始化」。",
+                    )
+            self.settings.paths.custom_runtime_dir = self.paths.relativize(new_path)
+            self.settings.paths.runtime_mode = MODE_CUSTOM
+            message = f"runtime 目录已固定为：{new_path}"
+        else:
             return
 
-        missing = [n for n in RUNTIME_REQUIRED if not (new_path / n).exists()]
-        if missing:
-            QMessageBox.information(
-                self,
-                "runtime 目录不完整",
-                f"新 runtime 目录缺少：\n{', '.join(missing)}\n\n"
-                "需要执行「初始化」生成运行文件，或确认这是空目录后继续。",
-            )
-
-        self.settings.paths.runtime_dir = self.paths.relativize(new_path)
         self.settings_store.save(self.settings)
-        self.log_bus.emit_line(LogSource.APP, f"runtime 目录已更换：{new_path}", "info")
+        self.log_bus.emit_line(LogSource.APP, message, "info")
         self.refresh_all()
         self.settings_changed.emit("paths")
 

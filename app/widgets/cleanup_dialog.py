@@ -39,7 +39,7 @@ class CleanupDialog(QDialog):
         self.setModal(True)
 
         self._version_checks: list[tuple[QCheckBox, cm.VersionInfo]] = []
-        self._backup_checks: list[tuple[QCheckBox, cm.BackupInfo]] = []
+        self._runtime_checks: list[tuple[QCheckBox, cm.RuntimeEntry]] = []
 
         self._build_ui()
         self._load_all_data()
@@ -65,9 +65,9 @@ class CleanupDialog(QDialog):
         self.version_card.setObjectName("Card")
         self.scroll_layout.addWidget(self.version_card)
 
-        self.backup_card = QFrame()
-        self.backup_card.setObjectName("Card")
-        self.scroll_layout.addWidget(self.backup_card)
+        self.runtime_card = QFrame()
+        self.runtime_card.setObjectName("Card")
+        self.scroll_layout.addWidget(self.runtime_card)
 
         self.log_card = QFrame()
         self.log_card.setObjectName("Card")
@@ -88,7 +88,7 @@ class CleanupDialog(QDialog):
 
     def _load_all_data(self):
         self._setup_version_card()
-        self._setup_backup_card()
+        self._setup_runtime_card()
         self._setup_log_card()
 
     def _setup_version_card(self):
@@ -145,51 +145,61 @@ class CleanupDialog(QDialog):
 
         self._update_version_stat()
 
-    def _setup_backup_card(self):
-        if self.backup_card.layout():
-            QWidget().setLayout(self.backup_card.layout())
-        self._backup_checks.clear()
+    def _setup_runtime_card(self):
+        if self.runtime_card.layout():
+            QWidget().setLayout(self.runtime_card.layout())
+        self._runtime_checks.clear()
 
-        layout = QVBoxLayout(self.backup_card)
+        layout = QVBoxLayout(self.runtime_card)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(8)
 
         header = QHBoxLayout()
-        title = QLabel("runtime 备份")
+        title = QLabel("runtime")
         title.setObjectName("CardTitle")
         header.addWidget(title)
 
-        self.backup_stat_label = QLabel()
-        self.backup_stat_label.setObjectName("MutedText")
-        header.addWidget(self.backup_stat_label)
+        self.runtime_stat_label = QLabel()
+        self.runtime_stat_label.setObjectName("MutedText")
+        header.addWidget(self.runtime_stat_label)
 
         header.addStretch(1)
 
-        self.btn_clean_backups = QPushButton("清理选中")
-        self.btn_clean_backups.setObjectName("ToolbarButton")
-        self.btn_clean_backups.setProperty("variant", "danger")
-        self.btn_clean_backups.clicked.connect(self._on_clean_backups)
-        header.addWidget(self.btn_clean_backups)
+        self.btn_clean_runtimes = QPushButton("清理选中")
+        self.btn_clean_runtimes.setObjectName("ToolbarButton")
+        self.btn_clean_runtimes.setProperty("variant", "danger")
+        self.btn_clean_runtimes.clicked.connect(self._on_clean_runtimes)
+        header.addWidget(self.btn_clean_runtimes)
         layout.addLayout(header)
 
-        backups = cm.scan_runtime_backups(self.paths, self.settings)
+        entries = cm.scan_runtimes(self.paths, self.settings)
         list_box = QVBoxLayout()
         list_box.setSpacing(6)
 
-        if not backups:
-            lbl = QLabel("没有找到 runtime 备份")
+        if not entries:
+            lbl = QLabel("runtimes/ 下还没有任何运行文件")
             lbl.setObjectName("MutedText")
             list_box.addWidget(lbl)
         else:
-            for b in backups:
-                cb = QCheckBox(f"{b.name}  ({cm.format_size(b.size_bytes)})")
-                cb.setChecked(True)
-                cb.stateChanged.connect(self._update_backup_stat)
-                self._backup_checks.append((cb, b))
+            for e in entries:
+                text = f"{e.label}  ({cm.format_size(e.size_bytes)})"
+                if e.detail:
+                    text += f"  ·  {e.detail}"
+                if e.is_current:
+                    cb = QCheckBox(f"{text}  （当前使用中）")
+                    cb.setEnabled(False)
+                elif not e.deletable:
+                    cb = QCheckBox(text)
+                    cb.setEnabled(False)
+                else:
+                    cb = QCheckBox(text)
+                    cb.setChecked(True)
+                    cb.stateChanged.connect(self._update_runtime_stat)
+                    self._runtime_checks.append((cb, e))
                 list_box.addWidget(cb)
         layout.addLayout(list_box)
 
-        self._update_backup_stat()
+        self._update_runtime_stat()
 
     def _setup_log_card(self):
         if self.log_card.layout():
@@ -247,10 +257,10 @@ class CleanupDialog(QDialog):
         self.version_stat_label.setText(f"(选中约 {cm.format_size(total)})")
         self.btn_clean_versions.setEnabled(total > 0)
 
-    def _update_backup_stat(self):
-        total = sum(b.size_bytes for cb, b in self._backup_checks if cb.isChecked())
-        self.backup_stat_label.setText(f"(选中约 {cm.format_size(total)})")
-        self.btn_clean_backups.setEnabled(total > 0)
+    def _update_runtime_stat(self):
+        total = sum(e.size_bytes for cb, e in self._runtime_checks if cb.isChecked())
+        self.runtime_stat_label.setText(f"(选中约 {cm.format_size(total)})")
+        self.btn_clean_runtimes.setEnabled(total > 0)
 
     def _update_log_btn_state(self):
         days = self.log_combo.currentData()
@@ -277,11 +287,12 @@ class CleanupDialog(QDialog):
         if box.clickedButton() is not del_btn:
             return
 
-        cm.delete_versions(selected)
+        cm.delete_versions(selected, self.paths, self.settings)
         self._setup_version_card()  # 重新扫描刷新
+        self._setup_runtime_card()  # 同名 runtime 已被连带删除
 
-    def _on_clean_backups(self):
-        selected = [b for cb, b in self._backup_checks if cb.isChecked()]
+    def _on_clean_runtimes(self):
+        selected = [e for cb, e in self._runtime_checks if cb.isChecked()]
         if not selected:
             return
 
@@ -289,7 +300,8 @@ class CleanupDialog(QDialog):
         box.setIcon(QMessageBox.Warning)
         box.setWindowTitle("确认清理")
         box.setText(
-            f"确定要永久删除选中的 {len(selected)} 个 runtime 备份吗？\n\n此操作无法恢复。"
+            f"确定要永久删除选中的 {len(selected)} 项 runtime 吗？\n\n"
+            "对应版本需要重新执行「初始化」才能启动服务。此操作无法恢复。"
         )
         del_btn = box.addButton("确认清理", QMessageBox.DestructiveRole)
         box.addButton("取消", QMessageBox.RejectRole)
@@ -299,8 +311,9 @@ class CleanupDialog(QDialog):
         if box.clickedButton() is not del_btn:
             return
 
-        cm.delete_backups(selected)
-        self._setup_backup_card()
+        cm.delete_runtimes(selected)
+        self._setup_runtime_card()
+        self._setup_version_card()
 
     def _on_clean_logs(self):
         days = self.log_combo.currentData()

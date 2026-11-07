@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from app import __version__
 from app.core.hoshimi_finder import find_hoshimi_exe
 from app.core.paths import Paths
+from app.core.runtime_layout import resolve_runtime
 from app.core.settings import Settings
 from app.widgets.toast import show_toast
 
@@ -182,7 +183,7 @@ class AboutPage(QWidget):
         path_rows = {
             "配置路径": self.paths.settings_path.parent,
             "home 目录": self.paths.home_dir(self.settings),
-            "runtime 目录": self.paths.runtime_dir(self.settings),
+            "runtime 目录": resolve_runtime(self.paths, self.settings).directory,
         }
 
         for i, (name, widget) in enumerate(rows):
