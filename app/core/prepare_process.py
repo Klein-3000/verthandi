@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from app.core.hoshimi_cmd import hoshimi_log_args
 from app.core.hoshimi_finder import find_hoshimi_exe
 from app.core.log_bus import LogBus, LogSource
 from app.core.paths import Paths
@@ -58,9 +59,11 @@ class PrepareProcess(QObject):
         home.mkdir(parents=True, exist_ok=True)
         runtime_dir.mkdir(parents=True, exist_ok=True)
 
+        # 日志参数紧跟子命令（全局参数必须放在子命令之后）
         cmd = [
             str(exe),
             "prepare",
+            *hoshimi_log_args(self.paths, self.settings, exe, exe.parent.name, self.log_bus),
             "--client-dir",
             str(client_dir),
             "--home",

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -14,7 +13,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -45,6 +43,7 @@ from app.core.server_process import ServerProcess, ServerState
 from app.core.settings import ClientEntry, Settings, SettingsStore
 from app.widgets.cleanup_dialog import CleanupDialog
 from app.widgets.toast import show_toast
+from app.widgets.version_input_dialog import VersionInputDialog
 
 
 def _scan_versions(bin_dir: Path) -> list[str]:
@@ -382,6 +381,19 @@ class SettingsPage(QWidget):
         hint.setWordWrap(True)
         box.addWidget(hint)
 
+        self.hoshimi_log_checkbox = QCheckBox("记录 Hoshimi 服务日志")
+        self.hoshimi_log_checkbox.setChecked(self.settings.behavior.hoshimi_log)
+        self.hoshimi_log_checkbox.toggled.connect(self._on_hoshimi_log_toggled)
+        box.addWidget(self.hoshimi_log_checkbox)
+
+        hint2 = QLabel(
+            "开启后日志写入 logs/hoshimi/<版本>/（每次启动一个文件，"
+            "可在清理页删除）；关闭时向 hoshimi 传 --no-log，不写日志文件。"
+        )
+        hint2.setObjectName("MutedText")
+        hint2.setWordWrap(True)
+        box.addWidget(hint2)
+
         return card
 
     def _on_auto_confirm_toggled(self, checked: bool) -> None:
@@ -390,6 +402,16 @@ class SettingsPage(QWidget):
         self.log_bus.emit_line(
             LogSource.APP,
             f"首次启动自动确认：{'已开启' if checked else '已关闭'}",
+            "info",
+        )
+        self.settings_changed.emit("behavior")
+
+    def _on_hoshimi_log_toggled(self, checked: bool) -> None:
+        self.settings.behavior.hoshimi_log = checked
+        self.settings_store.save(self.settings)
+        self.log_bus.emit_line(
+            LogSource.APP,
+            f"Hoshimi 服务日志：{'已开启' if checked else '已关闭'}",
             "info",
         )
         self.settings_changed.emit("behavior")
@@ -583,6 +605,10 @@ class SettingsPage(QWidget):
         self.auto_confirm_checkbox.setChecked(s.behavior.auto_confirm_first_launch)
         self.auto_confirm_checkbox.blockSignals(False)
 
+        self.hoshimi_log_checkbox.blockSignals(True)
+        self.hoshimi_log_checkbox.setChecked(s.behavior.hoshimi_log)
+        self.hoshimi_log_checkbox.blockSignals(False)
+
         self.log_checkbox.blockSignals(True)
         self.log_checkbox.setChecked(s.behavior.log_to_file)
         self.log_checkbox.blockSignals(False)
@@ -775,7 +801,22 @@ class SettingsPage(QWidget):
         finally:
             QApplication.restoreOverrideCursor()
 
-        # ---------- 阶段 2：scripts 缺失确认 ----------
+        # ---------- 阶段 2：确定版本号（硬性前置，先于 scripts 警告） ----------
+        version = detected
+        if not version and source.suffix.lower() == ".zip":
+            version = hoshimi_importer.detect_version_from_filename(source.name)
+
+        if not version:
+            dlg = VersionInputDialog(
+                self,
+                initial=hoshimi_importer.detect_version_from_filename(source.name)
+                or "",
+            )
+            if dlg.exec() != QDialog.Accepted:
+                return
+            version = dlg.value()
+
+        # ---------- 阶段 3：scripts 缺失确认 ----------
         if not scripts_ok:
             reply = QMessageBox.question(
                 self,
@@ -788,30 +829,7 @@ class SettingsPage(QWidget):
                 QMessageBox.No,
             )
             if reply != QMessageBox.Yes:
-                return  # 修复：用户选择“否”时退出导入
-
-        # ---------- 阶段 3：确定版本号 ----------
-        version = detected
-        if not version and source.suffix.lower() == ".zip":
-            version = hoshimi_importer.detect_version_from_filename(source.name)
-
-        if not version:
-            text, ok = QInputDialog.getText(
-                self,
-                "输入 hoshimi 版本号",
-                "未能自动检测版本号（hoshimi.exe -h 无有效输出）。\n"
-                "请手动输入（例如 0.0.5）：",
-            )
-            if not ok or not text.strip():
-                return
-            version = text.strip()
-            if not re.match(r"^\d+\.\d+\.\d+$", version):
-                QMessageBox.critical(
-                    self,
-                    "版本号格式错误",
-                    f"版本号必须形如 0.0.5，收到：{version}",
-                )
-                return
+                return  # 用户选择"否"时退出导入
 
         # ---------- 阶段 4：冲突处理 ----------
         target = bin_dir / version
@@ -840,9 +858,6 @@ class SettingsPage(QWidget):
         self.refresh_all()
         self.settings_changed.emit("version")
         show_toast(self, f"已导入 hoshimi {version}")
-
-        # runtime 版本不匹配时提示重新初始化
-        self._check_prepare_after_version(version)
 
     def _ask_conflict_action(self, version: str) -> str:
         box = QMessageBox(self)

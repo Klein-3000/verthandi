@@ -38,6 +38,7 @@ from app.core.settings import ClientEntry, Settings, SettingsStore
 from app.core.switch_client import SwitchError, SwitchOperation
 from app.widgets.log_view import LogView
 from app.widgets.prepare_dialog import PrepareDialog
+from app.widgets.telemetry_dialog import ask_telemetry_consent
 from app.widgets.toast import show_toast
 
 
@@ -85,6 +86,7 @@ class MainPage(QWidget):
         self.server_process.state_changed.connect(self._on_server_state)
         self.server_process.waiting_for_confirm.connect(self._on_waiting_confirm)
         self.server_process.confirm_resolved.connect(self._on_confirm_resolved)
+        self.server_process.telemetry_prompt.connect(self._on_telemetry_prompt)
         self.game_watcher.running_changed.connect(self._on_game_running_changed)
 
     # ---------- 顶部栏 ----------
@@ -173,6 +175,10 @@ class MainPage(QWidget):
 
     def _on_confirm_clicked(self) -> None:
         self.server_process.send_enter()
+
+    def _on_telemetry_prompt(self) -> None:
+        agree = ask_telemetry_consent(self)
+        self.server_process.answer_telemetry(agree)
 
     # ---------- 状态卡片 / 日志卡片 ----------
 

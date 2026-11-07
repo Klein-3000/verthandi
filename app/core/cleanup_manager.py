@@ -177,19 +177,29 @@ def scan_runtimes(paths: Paths, settings: Settings) -> list[RuntimeEntry]:
 
 
 def scan_logs(paths: Paths, settings: Settings) -> LogInfo:
+    """统计日志：应用会话日志（session-*.log）+ hoshimi 服务日志
+    （logs/hoshimi/<version>/*.log）。"""
     logs_dir = paths.logs_dir(settings)
-    if not logs_dir.exists():
-        return LogInfo(0, 0)
-
     count = 0
     total_size = 0
-    for f in logs_dir.glob("session-*.log"):
+
+    def _add_file(f: Path) -> None:
+        nonlocal count, total_size
         if f.is_file():
             count += 1
             try:
                 total_size += f.stat().st_size
             except OSError:
                 pass
+
+    if logs_dir.exists():
+        for f in logs_dir.glob("session-*.log"):
+            _add_file(f)
+        hoshimi_dir = logs_dir / "hoshimi"
+        if hoshimi_dir.is_dir():
+            for f in hoshimi_dir.glob("*/*.log"):
+                _add_file(f)
+
     return LogInfo(count, total_size)
 
 

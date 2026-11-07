@@ -11,7 +11,9 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from app.core.hoshimi_cmd import hoshimi_log_args
 from app.core.hoshimi_finder import find_hoshimi_exe
+from app.core.hoshimi_probe import probe_version
 from app.core.log_bus import LogBus, LogSource
 from app.core.paths import Paths
 from app.core.runtime_layout import resolve_runtime
@@ -43,17 +45,25 @@ class ServerProcess(QObject):
     - 启动：CREATE_NEW_CONSOLE + CREATE_NEW_PROCESS_GROUP + 隐藏控制台 + stdout 管道
     - 读取：reader 线程 → Qt Signal → 主线程 → log_bus
     - 停止：CTRL_BREAK → terminate → kill 三级
-    - 首次启动：检测到提示自动回车
+    - 首次启动：横幅提示按设置自动回车；0.0.8+ 遥测询问转发给 UI 弹窗
     - Job Object：KILL_ON_JOB_CLOSE，Verthandi 崩溃也能带走 hoshimi
     """
 
     state_changed = Signal(str)  # ServerState.value
     waiting_for_confirm = Signal()  # 需要用户手动确认
     confirm_resolved = Signal()  # 确认完成（自动或手动）
+    telemetry_prompt = Signal()  # hoshimi 0.0.8+ 的使用统计询问
     _stdout_line = Signal(str)  # 内部：reader 线程 → 主线程
     _process_exited = Signal(int)  # 内部：monitor 线程 → 主线程
 
-    FIRST_LAUNCH_HINTS = ("按回车", "Press Enter", "按回车继续")
+    # 提示识别用精确锚点，不再匹配裸"按回车"：
+    # 0.0.8 起有两个提示，语义相反——
+    #   横幅「按回车键继续启动服务器」：回车 = 继续；
+    #   遥测「是否同意启用？…按回车或输入其他内容不同意 [y/N]」：回车 = 拒绝。
+    # 遥测提示的文案里也含"按回车"，因此必须先判断遥测锚点。
+    BANNER_HINT = "按回车键继续启动服务器"
+    PRESS_ENTER_HINT = "Press Enter"
+    TELEMETRY_HINT = "是否同意启用？"
 
     def __init__(self, paths: Paths, settings: Settings, log_bus: LogBus):
         super().__init__()
@@ -67,6 +77,7 @@ class ServerProcess(QObject):
         self._monitor_thread: threading.Thread | None = None
         self._job_handle = 0
         self._auto_confirm_pending = False
+        self._telemetry_pending = False
         self._stop_phase = 0
 
         self._stop_timer = QTimer(self)
@@ -100,31 +111,7 @@ class ServerProcess(QObject):
         exe = self.hoshimi_exe()
         if not exe.exists():
             return None
-        try:
-            result = subprocess.run(
-                [str(exe), "version"],
-                capture_output=True,
-                check=False,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout_ms / 1000,
-            )
-        except (subprocess.TimeoutExpired, OSError):
-            return None
-        return self._parse_version((result.stdout or "") + (result.stderr or ""))
-
-    @staticmethod
-    def _parse_version(text: str) -> tuple[str, str] | None:
-        version = compile_time = ""
-        for line in text.splitlines():
-            if "当前版本" in line and "：" in line:
-                version = line.split("：", 1)[1].strip()
-            elif "编译时间" in line and "：" in line:
-                compile_time = line.split("：", 1)[1].strip()
-        if version:
-            return version, compile_time
-        return None
+        return probe_version(exe, timeout_ms / 1000)
 
     # ---------- 启动 ----------
 
@@ -141,9 +128,11 @@ class ServerProcess(QObject):
         runtime = resolve_runtime(self.paths, self.settings).directory
         home.mkdir(parents=True, exist_ok=True)
 
+        # 日志参数紧跟子命令（全局参数必须放在子命令之后）
         cmd = [
             str(exe),
             "serve",
+            *hoshimi_log_args(self.paths, self.settings, exe, exe.parent.name, self.log_bus),
             "--home",
             str(home),
             "--runtime-dir",
@@ -226,8 +215,36 @@ class ServerProcess(QObject):
         self.log_bus.emit_line(LogSource.HOSHIMI, text)
         if self._state == ServerState.STARTING and "服务已启动" in text:
             self._set_state(ServerState.RUNNING)
-        if any(hint in text for hint in self.FIRST_LAUNCH_HINTS):
+        # 顺序敏感：遥测提示文案里也含"按回车"，先判遥测锚点
+        if self.TELEMETRY_HINT in text:
+            self._handle_telemetry_prompt()
+        elif self.BANNER_HINT in text or self.PRESS_ENTER_HINT in text:
             self._maybe_auto_confirm()
+
+    def _handle_telemetry_prompt(self) -> None:
+        """0.0.8+ 的使用统计询问。这是 hoshimi 自己的遥测功能，与 Verthandi 无关，
+        必须由用户决定；答复由 hoshimi 写入 config.json（telemetry_consent），
+        一生只问一次。若无人在超时前答复也无需处理——hoshimi 会一直等待 stdin。"""
+        if self._telemetry_pending:
+            return
+        self._telemetry_pending = True
+        self.telemetry_prompt.emit()
+
+    def answer_telemetry(self, agree: bool) -> None:
+        """用户在弹窗中选择后调用，转发 y / 回车给 hoshimi。"""
+        self._telemetry_pending = False
+        if self._proc is None or self._proc.stdin is None:
+            return
+        try:
+            self._proc.stdin.write("y\n" if agree else "\n")
+            self._proc.stdin.flush()
+            self.log_bus.emit_line(
+                LogSource.APP,
+                "已答复 Hoshimi 使用统计询问：" + ("同意" if agree else "拒绝"),
+                "info",
+            )
+        except (OSError, ValueError):
+            pass
 
     def _maybe_auto_confirm(self) -> None:
         if not self._auto_confirm_pending:
@@ -265,6 +282,7 @@ class ServerProcess(QObject):
         self._stop_timer.stop()
         self._stop_phase = 0
         self._proc = None
+        self._telemetry_pending = False
         if self._auto_confirm_pending:
             self._auto_confirm_pending = False
             self.confirm_resolved.emit()
@@ -279,6 +297,7 @@ class ServerProcess(QObject):
             return
         if self._proc is None:
             return
+        self._telemetry_pending = False
         if self._auto_confirm_pending:
             self._auto_confirm_pending = False
             self.confirm_resolved.emit()

@@ -13,6 +13,7 @@ Verthandi 是一个为 [Hoshimi](https://github.com/Enigfrank/Hoshimi) 量身定
 - **🧹 空间管理**：可视化清理废弃的 hoshimi 版本、各版本 runtime 和庞大日志。
 - **🔒 单实例运行**：重复双击不会多开，而是将已运行的窗口拉到最前。
 - **📦 完全便携化**：无需安装，解压即用，所有配置和存档跟随 exe 所在目录。
+- **📶 Hoshimi 0.0.8 适配**：首次启动的使用统计询问转达为弹窗（默认拒绝，由你决定），日志开关可控。
 
 ---
 
@@ -67,6 +68,8 @@ Verthandi/
 │   └── 0.0.5/             # prepare.json 记录该份运行文件的来源与时间
 ├── home/                  # 游戏存档与配置文件（由 hoshimi 生成）
 ├── logs/                  # 运行日志
+│   ├── session-*.log      # Verthandi 自身的会话日志（默认关闭）
+│   └── hoshimi/<版本>/    # hoshimi 服务日志（默认关闭，见下文）
 └── _internal/             # 运行库（请勿移动或删除）
 ```
 
@@ -83,6 +86,26 @@ runtime 目录由 hoshimi 版本自动派生：切换 hoshimi 版本即切换对
 3. 都没有时使用系统默认图标。
 
 `verthandi.ico` 修改后**下次启动生效**，无需重新打包。
+
+### 📝 两个日志开关的区别
+
+设置页「行为」里有两个独立的日志开关，写日志的**主体**不同：
+
+| 开关 | 谁在写 | 内容 | 位置 |
+|---|---|---|---|
+| 记录日志到文件（logs/session-\*.log） | Verthandi 自身 | GUI 操作记录、切服日志、hoshimi 控制台输出的转写 | `logs/session-*.log` |
+| 记录 Hoshimi 服务日志 | hoshimi.exe | hoshimi 的内部运行日志（诊断细节比控制台输出更全） | `logs/hoshimi/<版本>/` |
+
+- 「记录 Hoshimi 服务日志」默认**关闭**：关闭时 Verthandi 向 hoshimi 传 `--no-log`，完全不写日志文件；开启时每次启动在 `logs/hoshimi/<版本>/` 下生成一个文件，可在清理页查看体积并删除。
+- 排查「服务起不来 / 游戏连不上」时，Hoshimi 服务日志通常比会话日志更有用。
+- hoshimi 0.0.5 及更早版本不支持日志参数，Verthandi 会自动探测并保持该版本的默认行为（日志出现在 `bin/<版本>/logs/`）。
+
+### 📶 Hoshimi 0.0.8 的使用统计询问
+
+hoshimi 0.0.8 首次启动会询问是否启用它自己的「使用统计」（遥测，数据发送至第三方 Umami Cloud）。由于 Verthandi 隐藏了 hoshimi 的控制台，这个询问会转达为 Verthandi 的弹窗——**这是 Hoshimi（第三方服务端程序）自身的功能，与 Verthandi 无关**，是否同意由你决定，默认拒绝。
+
+- 你的选择由 hoshimi 记录在 `home/config.json`，之后不会再询问；
+- 之后如需更改，可编辑 `home/config.json` 将 `telemetry_enabled` 设为 `false`。
 
 ---
 

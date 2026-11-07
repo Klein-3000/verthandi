@@ -11,3 +11,4 @@ data/
 home/
 runtime*/
 bin/
+.hoshimi-capabilities.json

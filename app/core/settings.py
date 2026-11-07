@@ -198,6 +198,8 @@ class BehaviorConfig:
     confirm_before_stop_server: bool = True
     auto_confirm_first_launch: bool = True
     log_to_file: bool = False
+    # hoshimi 的服务日志（--log-dir logs/hoshimi/<version>/）；默认关，即 --no-log
+    hoshimi_log: bool = False
     backend: str = "powershell"
 
     def to_dict(self) -> dict[str, Any]:
@@ -206,6 +208,7 @@ class BehaviorConfig:
             "confirmBeforeStopServer": self.confirm_before_stop_server,
             "autoConfirmFirstLaunch": self.auto_confirm_first_launch,
             "logToFile": self.log_to_file,
+            "hoshimiLog": self.hoshimi_log,
             "backend": self.backend,
         }
 
@@ -219,6 +222,7 @@ class BehaviorConfig:
             confirm_before_stop_server=_as_bool(d.get("confirmBeforeStopServer"), True),
             auto_confirm_first_launch=_as_bool(d.get("autoConfirmFirstLaunch"), True),
             log_to_file=_as_bool(d.get("logToFile"), False),
+            hoshimi_log=_as_bool(d.get("hoshimiLog"), False),
             backend=backend,
         )
 
