@@ -7,20 +7,22 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
-    QComboBox,
     QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QSpinBox,
-    QToolButton,
     QVBoxLayout,
     QWidget,
+)
+from qfluentwidgets import (
+    CheckBox,
+    ComboBox,
+    FluentIcon as FIF,
+    PushButton,
 )
 
 from app.core import cleanup_manager as cm
@@ -42,6 +44,14 @@ from app.core.runtime_layout import (
 from app.core.server_process import ServerProcess, ServerState
 from app.core.settings import ClientEntry, Settings, SettingsStore
 from app.widgets.cleanup_dialog import CleanupDialog
+from app.widgets.expand_card import ExpandCard
+from app.widgets.fluent_message import (
+    ask_choice,
+    critical,
+    information,
+    question,
+    warning,
+)
 from app.widgets.toast import show_toast
 from app.widgets.version_input_dialog import VersionInputDialog
 
@@ -119,6 +129,7 @@ class SettingsPage(QWidget):
         layout.addWidget(self.log_warning_banner)
 
         layout.addWidget(self._build_essential_card())
+        layout.addWidget(self._build_port_card())
         layout.addWidget(self._build_appearance_card())
         layout.addWidget(self._build_behavior_card())
         layout.addWidget(self._build_logging_card())
@@ -164,7 +175,7 @@ class SettingsPage(QWidget):
         box.addLayout(row)
 
         # hoshimi 版本
-        self.version_combo = QComboBox()
+        self.version_combo = ComboBox()
         self.version_combo.setMinimumWidth(220)
         self.version_combo.currentIndexChanged.connect(self._on_version_changed)
         self.import_btn = QPushButton("导入…")
@@ -212,32 +223,19 @@ class SettingsPage(QWidget):
         row.addWidget(self.change_runtime_btn)
         box.addLayout(row)
 
-        # 端口折叠
-        box.addWidget(self._build_port_section())
-
         return card
 
-    def _build_port_section(self) -> QWidget:
-        wrapper = QWidget()
-        layout = QVBoxLayout(wrapper)
-        layout.setContentsMargins(0, 8, 0, 0)
-        layout.setSpacing(8)
+    def _build_port_card(self) -> ExpandCard:
+        """端口（高级设置）：独立的可展开卡片（Fluent 风格）。"""
+        card = ExpandCard(
+            FIF.GLOBE, "端口（高级设置）", "默认 25565，仅在需要时修改"
+        )
 
-        self.port_toggle = QToolButton()
-        self.port_toggle.setObjectName("PortToggle")
-        self.port_toggle.setText("端口（高级设置）")
-        self.port_toggle.setCheckable(True)
-        self.port_toggle.setChecked(False)
-        self.port_toggle.setArrowType(Qt.RightArrow)
-        self.port_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.port_toggle.setCursor(Qt.PointingHandCursor)
-        self.port_toggle.toggled.connect(self._on_port_toggled)
-        layout.addWidget(self.port_toggle)
-
-        self.port_content = QWidget()
-        content_layout = QVBoxLayout(self.port_content)
-        content_layout.setContentsMargins(20, 4, 0, 0)
-        content_layout.setSpacing(10)
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(48, 4, 24, 16)
+        layout.setSpacing(10)
 
         self.http_spin = QSpinBox()
         self.http_spin.setRange(1, 65535)
@@ -246,8 +244,8 @@ class SettingsPage(QWidget):
         self.http_spin.editingFinished.connect(self._on_http_editing_finished)
         self.http_spin.valueChanged.connect(self._on_port_value_changed)
         self.http_status = QLabel("")
-        self.http_status.setObjectName("PortStatus")
-        content_layout.addLayout(
+        self.http_status.setStyleSheet("color: #9ca3af; background: transparent;")
+        layout.addLayout(
             self._port_row("HTTP 端口", self.http_spin, self.http_status)
         )
 
@@ -258,44 +256,39 @@ class SettingsPage(QWidget):
         self.game_spin.editingFinished.connect(self._on_game_editing_finished)
         self.game_spin.valueChanged.connect(self._on_port_value_changed)
         self.game_status = QLabel("")
-        self.game_status.setObjectName("PortStatus")
-        content_layout.addLayout(
+        self.game_status.setStyleSheet("color: #9ca3af; background: transparent;")
+        layout.addLayout(
             self._port_row("游戏端口", self.game_spin, self.game_status)
         )
 
         hint = QLabel(
             "游戏端口同时使用 TCP 和 UDP。修改后需要重新放行防火墙并更新玩家转发规则。"
         )
-        hint.setObjectName("MutedText")
+        hint.setStyleSheet("color: #9ca3af; background: transparent;")
         hint.setWordWrap(True)
-        content_layout.addWidget(hint)
+        layout.addWidget(hint)
 
         action_row = QHBoxLayout()
         action_row.addStretch(1)
-        self.apply_btn = QPushButton("应用")
-        self.apply_btn.setObjectName("ToolbarButton")
+        self.apply_btn = PushButton("应用")
         self.apply_btn.setEnabled(False)
         self.apply_btn.clicked.connect(self._on_apply_ports)
         action_row.addWidget(self.apply_btn)
-        content_layout.addLayout(action_row)
+        layout.addLayout(action_row)
 
-        self.port_content.setVisible(False)
-        layout.addWidget(self.port_content)
-        return wrapper
+        card.addGroupWidget(body)
+        return card
 
     def _port_row(self, label: str, spin: QSpinBox, status: QLabel) -> QHBoxLayout:
         row = QHBoxLayout()
         key = QLabel(label)
-        key.setObjectName("StatusKey")
+        # 展开卡自带样式会把 QLabel 刷成黑色，这里内联指定灰色
+        key.setStyleSheet("color: #6b7280; background: transparent;")
         key.setFixedWidth(110)
         row.addWidget(key)
         row.addWidget(spin)
         row.addWidget(status, 1)
         return row
-
-    def _on_port_toggled(self, checked: bool) -> None:
-        self.port_content.setVisible(checked)
-        self.port_toggle.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
 
     # ---------- 修改角色外观 ----------
 
@@ -366,7 +359,7 @@ class SettingsPage(QWidget):
         title.setObjectName("CardTitle")
         box.addWidget(title)
 
-        self.auto_confirm_checkbox = QCheckBox("首次启动时自动确认 Hoshimi 提示")
+        self.auto_confirm_checkbox = CheckBox("首次启动时自动确认 Hoshimi 提示")
         self.auto_confirm_checkbox.setChecked(
             self.settings.behavior.auto_confirm_first_launch
         )
@@ -381,7 +374,7 @@ class SettingsPage(QWidget):
         hint.setWordWrap(True)
         box.addWidget(hint)
 
-        self.hoshimi_log_checkbox = QCheckBox("记录 Hoshimi 服务日志")
+        self.hoshimi_log_checkbox = CheckBox("记录 Hoshimi 服务日志")
         self.hoshimi_log_checkbox.setChecked(self.settings.behavior.hoshimi_log)
         self.hoshimi_log_checkbox.toggled.connect(self._on_hoshimi_log_toggled)
         box.addWidget(self.hoshimi_log_checkbox)
@@ -429,7 +422,7 @@ class SettingsPage(QWidget):
         title.setObjectName("CardTitle")
         box.addWidget(title)
 
-        self.log_checkbox = QCheckBox("记录日志到文件（logs/session-*.log）")
+        self.log_checkbox = CheckBox("记录日志到文件（logs/session-*.log）")
         self.log_checkbox.setChecked(self.settings.behavior.log_to_file)
         self.log_checkbox.toggled.connect(self._on_log_toggled)
         box.addWidget(self.log_checkbox)
@@ -534,7 +527,7 @@ class SettingsPage(QWidget):
                 self.settings_changed.emit("cleanup")
         except Exception as e:
             QApplication.restoreOverrideCursor()
-            QMessageBox.critical(self, "错误", f"打开清理中心失败：\n{e}")
+            critical(self, "错误", f"打开清理中心失败：\n{e}")
 
     # ---------- 磁盘占用统计 ----------
 
@@ -624,13 +617,13 @@ class SettingsPage(QWidget):
         current = self.settings.server.version
 
         if versions:
-            self.version_combo.addItem(f"自动选择最新（{versions[0]}）", "")
+            self.version_combo.addItem(f"自动选择最新（{versions[0]}）", userData="")
 
         for v in versions:
-            self.version_combo.addItem(v, v)
+            self.version_combo.addItem(v, userData=v)
 
         if current and current not in versions:
-            self.version_combo.addItem(f"{current}（目录缺失）", current)
+            self.version_combo.addItem(f"{current}（目录缺失）", userData=current)
 
         idx = self.version_combo.findData(current) if current else 0
         idx = max(idx, 0)
@@ -655,27 +648,23 @@ class SettingsPage(QWidget):
             return
         exe = Path(path)
         if exe.name.lower() != "aethergazer.exe":
-            QMessageBox.critical(
+            critical(
                 self, "文件不匹配", f"选中的文件不是 AetherGazer.exe：\n{exe.name}"
             )
             return
         if old_path and Path(old_path).resolve() == exe.resolve():
             return
 
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("更换游戏目录")
-        box.setText("确定要更换游戏目录吗？")
-        box.setInformativeText(
+        ok = question(
+            self,
+            "更换游戏目录",
+            "确定要更换游戏目录吗？\n\n"
             f"从：\n{old_path or '（未设置）'}\n\n"
             f"改为：\n{exe}\n\n"
-            "runtime 与 config.json 可能不匹配，需要重新初始化。"
+            "runtime 与 config.json 可能不匹配，需要重新初始化。",
+            yes_text="确认更换",
         )
-        confirm_btn = box.addButton("确认更换", QMessageBox.AcceptRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(confirm_btn)
-        box.exec()
-        if box.clickedButton() is not confirm_btn:
+        if not ok:
             return
 
         entry = client or ClientEntry(id="", name=exe.parent.name, exe_path=str(exe))
@@ -751,7 +740,7 @@ class SettingsPage(QWidget):
         try:
             bin_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            QMessageBox.critical(self, "导入失败", f"创建 bin 目录失败：{e}")
+            critical(self, "导入失败", f"创建 bin 目录失败：{e}")
             return
 
         ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
@@ -760,7 +749,7 @@ class SettingsPage(QWidget):
         try:
             temp_dir.mkdir()
         except OSError as e:
-            QMessageBox.critical(self, "导入失败", f"创建临时目录失败：{e}")
+            critical(self, "导入失败", f"创建临时目录失败：{e}")
             return
 
         try:
@@ -792,11 +781,11 @@ class SettingsPage(QWidget):
             detected = hoshimi_importer.detect_version(exe_path)
         except hoshimi_importer.ImportError as e:
             QApplication.restoreOverrideCursor()
-            QMessageBox.critical(self, "导入失败", e.message)
+            critical(self, "导入失败", e.message)
             return
         except Exception as e:
             QApplication.restoreOverrideCursor()
-            QMessageBox.critical(self, "导入失败", f"{type(e).__name__}: {e}")
+            critical(self, "导入失败", f"{type(e).__name__}: {e}")
             return
         finally:
             QApplication.restoreOverrideCursor()
@@ -818,17 +807,17 @@ class SettingsPage(QWidget):
 
         # ---------- 阶段 3：scripts 缺失确认 ----------
         if not scripts_ok:
-            reply = QMessageBox.question(
+            ok = question(
                 self,
                 "scripts 目录缺失",
                 "未能找到有效的 scripts/ 目录（缺失或为空）。\n\n"
                 "Verthandi 内置的切服功能不受影响，"
                 "但缺少 scripts 会导致部分辅助脚本功能（如战斗布局修复）不可用。\n\n"
                 "仍要继续导入吗？",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
+                yes_text="仍要导入",
+                danger=True,
             )
-            if reply != QMessageBox.Yes:
+            if not ok:
                 return  # 用户选择"否"时退出导入
 
         # ---------- 阶段 4：冲突处理 ----------
@@ -843,7 +832,7 @@ class SettingsPage(QWidget):
         try:
             final_path = hoshimi_importer.finalize(temp_dir, bin_dir, version, action)
         except hoshimi_importer.ImportError as e:
-            QMessageBox.critical(self, "导入失败", e.message)
+            critical(self, "导入失败", e.message)
             return
 
         # ---------- 阶段 6：切换版本 ----------
@@ -860,40 +849,20 @@ class SettingsPage(QWidget):
         show_toast(self, f"已导入 hoshimi {version}")
 
     def _ask_conflict_action(self, version: str) -> str:
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("版本目录已存在")
-        box.setText(f"bin/{version}/ 已存在。")
-        box.setInformativeText(
-            "请选择处理方式：\n\n"
+        return ask_choice(
+            self,
+            "版本目录已存在",
+            f"bin/{version}/ 已存在。请选择处理方式：\n\n"
             f"• 备份：现有目录重命名为 bin/{version}-backup-<时间>/，\n"
             f"  然后放入新版本（推荐）\n"
             f"• 覆盖：直接删除旧目录并放入新版本\n"
-            f"• 取消：不做任何改动"
+            f"• 取消：不做任何改动",
+            [("backup", "备份"), ("overwrite", "覆盖")],
+            default=0,
         )
-        backup_btn = box.addButton("备份", QMessageBox.AcceptRole)
-        overwrite_btn = box.addButton("覆盖", QMessageBox.DestructiveRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(backup_btn)
-        box.exec()
-
-        clicked = box.clickedButton()
-        if clicked is backup_btn:
-            return "backup"
-        if clicked is overwrite_btn:
-            return "overwrite"
-        return "cancel"
 
     def _prompt_init(self, title: str, message: str) -> None:
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle(title)
-        box.setText(message)
-        init_btn = box.addButton("去初始化", QMessageBox.AcceptRole)
-        box.addButton("稍后", QMessageBox.RejectRole)
-        box.setDefaultButton(init_btn)
-        box.exec()
-        if box.clickedButton() is init_btn:
+        if question(self, title, message, yes_text="去初始化"):
             self.request_init.emit()
 
     # ---------- home / runtime ----------
@@ -913,7 +882,7 @@ class SettingsPage(QWidget):
 
         cfg = new_path / "config.json"
         if not cfg.exists():
-            QMessageBox.information(
+            information(
                 self,
                 "home 目录无 config.json",
                 f"新 home 目录缺少 config.json：\n{cfg}\n\n"
@@ -937,27 +906,22 @@ class SettingsPage(QWidget):
             return
         new_path = Path(path).resolve()
 
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Question)
-        box.setWindowTitle("runtime 存放方式")
-        box.setText("这个目录要怎么用？")
-        box.setInformativeText(
+        choice = ask_choice(
+            self,
+            "runtime 存放方式",
+            "这个目录要怎么用？\n\n"
             f"{new_path}\n\n"
             "• 按版本：作为根目录，每个 hoshimi 版本各占一个子目录，切版本即切 runtime（推荐）\n"
-            "• 固定目录：所有版本共用这一个 runtime 目录，切换版本后需要重新初始化"
+            "• 固定目录：所有版本共用这一个 runtime 目录，切换版本后需要重新初始化",
+            [("root", "作为根目录（按版本）"), ("custom", "作为固定的 runtime 目录")],
+            default=0,
         )
-        root_btn = box.addButton("作为根目录（按版本）", QMessageBox.AcceptRole)
-        custom_btn = box.addButton("作为固定的 runtime 目录", QMessageBox.ActionRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(root_btn)
-        box.exec()
-        clicked = box.clickedButton()
 
-        if clicked is root_btn:
+        if choice == "root":
             self.settings.paths.runtime_root = self.paths.relativize(new_path)
             self.settings.paths.runtime_mode = MODE_PER_VERSION
             message = f"runtime 根目录已更换：{new_path}"
-        elif clicked is custom_btn:
+        elif choice == "custom":
             try:
                 non_empty = any(new_path.iterdir())
             except OSError:
@@ -965,7 +929,7 @@ class SettingsPage(QWidget):
             if non_empty:
                 complete, missing = validate_runtime(new_path)
                 if not complete:
-                    QMessageBox.information(
+                    information(
                         self,
                         "目录可能不是完整的 runtime",
                         "缺少：\n"
@@ -1026,6 +990,7 @@ class SettingsPage(QWidget):
         return result
 
     def _set_status_label(self, label: QLabel, result: PortResult | None) -> None:
+        # 内联样式：展开卡自带的 QLabel 规则会覆盖全局 QSS 的状态色
         if result is None:
             label.setText("")
             label.setProperty("state", "")
@@ -1034,9 +999,11 @@ class SettingsPage(QWidget):
         if result.is_free:
             label.setText("✓ 空闲")
             label.setProperty("state", "ok")
+            label.setStyleSheet("color: #16a34a; background: transparent;")
         else:
             label.setText(f"✗ {result.summary()}")
             label.setProperty("state", "error")
+            label.setStyleSheet("color: #dc2626; background: transparent;")
         self._repolish(label)
 
     # ---------- 应用 ----------
@@ -1068,18 +1035,16 @@ class SettingsPage(QWidget):
 
         if problems:
             lines = [f"• 端口 {r.port} {r.summary()}" for r in problems]
-            box = QMessageBox(self)
-            box.setIcon(QMessageBox.Warning)
-            box.setWindowTitle("保存端口")
-            box.setText("以下端口当前不可用：")
-            box.setInformativeText(
-                "\n".join(lines) + "\n\n仍要保存吗？启动服务时会再次检查。"
+            ok = question(
+                self,
+                "保存端口",
+                "以下端口当前不可用：\n\n"
+                + "\n".join(lines)
+                + "\n\n仍要保存吗？启动服务时会再次检查。",
+                yes_text="强制保存",
+                danger=True,
             )
-            box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            box.setDefaultButton(QMessageBox.No)
-            box.button(QMessageBox.Yes).setText("强制保存")
-            box.button(QMessageBox.No).setText("取消")
-            if box.exec() != QMessageBox.Yes:
+            if not ok:
                 return
 
         self.settings.server.http_port = new_http
@@ -1109,17 +1074,13 @@ class SettingsPage(QWidget):
             self._show_switch_hint(cur_http, new_http)
 
     def _show_switch_hint(self, old_http: int, new_http: int) -> None:
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Information)
-        box.setWindowTitle("端口已修改")
-        box.setText(
+        information(
+            self,
+            "端口已修改",
             f"HTTP 端口已从 {old_http} 改为 {new_http}。\n\n"
             "客户端仍指向旧端口。请到主页面点击「切换」重新生成客户端配置，"
-            "否则游戏将无法连接本地服务。"
+            "否则游戏将无法连接本地服务。",
         )
-        box.setStandardButtons(QMessageBox.Ok)
-        box.button(QMessageBox.Ok).setText("我知道了")
-        box.exec()
 
     # ---------- 服务状态 ----------
 

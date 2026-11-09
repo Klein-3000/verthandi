@@ -5,6 +5,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QLibraryInfo, Qt, QTimer, QTranslator
 from PySide6.QtWidgets import QApplication
+from qfluentwidgets import Theme, setTheme, setThemeColor
 
 from app.core.app_icon import load_app_icon
 from app.core.game_process import GameWatcher
@@ -139,6 +140,15 @@ class VerthandiApplication(QApplication):
             self.styleHints().setColorScheme(scheme)
         except (AttributeError, TypeError):
             pass
+
+        # Fluent 控件（弹窗、复选框、下拉框等）跟随同一主题设置
+        fluent_theme = {
+            "light": Theme.LIGHT,
+            "dark": Theme.DARK,
+        }.get(theme, Theme.AUTO)
+        setTheme(fluent_theme)
+        # 主题色与界面既有蓝色强调色保持一致（导航栏选中态、主按钮等）
+        setThemeColor("#2563eb")
 
     def _activate_window(self) -> None:
         self.window.bring_to_front()

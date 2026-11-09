@@ -146,9 +146,11 @@ uv run pyinstaller Verthandi.spec
 ---
 
 ## 🙏 致谢与许可
-本项目基于 [Apache-2.0](./LICENSE) 协议开源。
+本项目基于 [GPL-3.0](./LICENSE) 协议开源（因引入 [PyQt-Fluent-Widgets](https://github.com/zhiyiYo/PyQt-Fluent-Widgets) 组件库，整体许可证由 Apache-2.0 调整为 GPL-3.0）。
 
 - 感谢 [Hoshimi](https://github.com/Enigfrank/Hoshimi) 提供强大的服务端支持。
+
+- 感谢 [PyQt-Fluent-Widgets](https://github.com/zhiyiYo/PyQt-Fluent-Widgets)（GPL-3.0）提供 Fluent 风格界面组件。
 
 - 感谢 PySide6, psutil, pycryptodome 等优秀的开源库。
 

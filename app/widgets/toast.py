@@ -1,41 +1,39 @@
+"""短暂浮层提示。
+
+底层换成 qfluentwidgets 的 InfoBar（Fluent 风格通知条），
+show_toast 签名与旧版保持一致，调用方无感知。
+"""
+
 from __future__ import annotations
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer
-from PySide6.QtWidgets import QLabel, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QWidget
+from qfluentwidgets import InfoBar, InfoBarPosition
 
 
-class Toast(QLabel):
-    """短暂显示的浮层提示，2 秒后淡出。"""
+def show_toast(
+    host: QWidget,
+    text: str,
+    duration_ms: int = 2000,
+    level: str = "info",
+) -> None:
+    """在 host 所在顶层窗口顶部显示一条 Fluent 通知。
 
-    def __init__(self, text: str, host: QWidget, duration_ms: int = 2000):
-        super().__init__(text, host)
-        self.setObjectName("Toast")
-        self.setAlignment(Qt.AlignCenter)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.setAttribute(Qt.WA_DeleteOnClose, True)
-        self.adjustSize()
-        self._reposition(host)
-        self.show()
-        self.raise_()
-        QTimer.singleShot(duration_ms, self._fade_out)
+    level: info / success / warning / error
+    """
+    factory = {
+        "info": InfoBar.info,
+        "success": InfoBar.success,
+        "warning": InfoBar.warning,
+        "error": InfoBar.error,
+    }.get(level, InfoBar.info)
 
-    def _reposition(self, host: QWidget) -> None:
-        tw, th = self.width(), self.height()
-        hw, hh = host.width(), host.height()
-        x = max(0, (hw - tw) // 2)
-        y = max(0, hh - th - 60)
-        self.move(x, y)
-
-    def _fade_out(self) -> None:
-        self._anim = QPropertyAnimation(self, b"windowOpacity", self)
-        self._anim.setDuration(300)
-        self._anim.setStartValue(1.0)
-        self._anim.setEndValue(0.0)
-        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
-        self._anim.finished.connect(self.close)
-        self._anim.start()
-
-
-def show_toast(host: QWidget, text: str, duration_ms: int = 2000) -> None:
-    """在 host 所在的顶层窗口底部中央显示 Toast。"""
-    Toast(text, host.window(), duration_ms)
+    factory(
+        title="",
+        content=text,
+        orient=Qt.Horizontal,
+        isClosable=False,
+        position=InfoBarPosition.TOP,
+        duration=duration_ms,
+        parent=host.window(),
+    )

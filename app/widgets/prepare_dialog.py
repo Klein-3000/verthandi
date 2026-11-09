@@ -2,33 +2,33 @@ from __future__ import annotations
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
-    QDialog,
-    QHBoxLayout,
     QLabel,
     QPlainTextEdit,
-    QPushButton,
     QVBoxLayout,
 )
 
 from app.core.prepare_process import PrepareProcess
+from qfluentwidgets import MessageBoxBase
 
 
-class PrepareDialog(QDialog):
-    """prepare 进度对话框。模态，可取消。"""
+class PrepareDialog(MessageBoxBase):
+    """prepare 进度对话框。模态（带遮罩），可取消。"""
 
     def __init__(self, prep: PrepareProcess, parent=None):
-        super().__init__(parent)
+        if parent is None:
+            from PySide6.QtWidgets import QApplication
+
+            parent = QApplication.activeWindow()
+        super().__init__(parent=parent)
         self.prep = prep
         self._elapsed = 0
         self._last_line = ""
         self._result_code: int | None = None
 
-        self.setWindowTitle("正在初始化")
-        self.setModal(True)
-        self.setMinimumSize(640, 380)
+        self.widget.setMinimumSize(640, 420)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout = self.viewLayout
+        layout.setContentsMargins(16, 16, 16, 0)
         layout.setSpacing(10)
 
         self.status = QLabel("正在初始化…")
@@ -42,13 +42,12 @@ class PrepareDialog(QDialog):
         self.output.setMaximumBlockCount(5000)
         layout.addWidget(self.output, 1)
 
-        row = QHBoxLayout()
-        row.addStretch(1)
-        self.cancel_btn = QPushButton("取消")
-        self.cancel_btn.setObjectName("ToolbarButton")
-        self.cancel_btn.clicked.connect(self._on_cancel)
-        row.addWidget(self.cancel_btn)
-        layout.addLayout(row)
+        # 只保留一个按钮（占满整行），承担 取消/正在取消/关闭 三种状态
+        self.yesButton.hide()
+        self.cancelButton.setText("取消")
+        self.cancelButton.clicked.disconnect()
+        self.cancelButton.clicked.connect(self._on_cancel)
+        self._cancel_btn = self.cancelButton
 
         self.prep.output_line.connect(self._on_line)
         self.prep.finished.connect(self._on_finished)
@@ -89,23 +88,23 @@ class PrepareDialog(QDialog):
             self.status.setText("初始化完成")
         else:
             self.status.setText(f"初始化失败（退出码 {code}）")
-        self.cancel_btn.setText("关闭")
-        self.cancel_btn.clicked.disconnect()
-        self.cancel_btn.clicked.connect(self.accept)
+        self._cancel_btn.setText("关闭")
+        self._cancel_btn.clicked.disconnect()
+        self._cancel_btn.clicked.connect(self.accept)
         QTimer.singleShot(800, self.accept) if code == 0 else None
 
     def _on_failed(self, message: str) -> None:
         self._timer.stop()
         self._result_code = -2
         self.status.setText(message)
-        self.cancel_btn.setText("关闭")
-        self.cancel_btn.clicked.disconnect()
-        self.cancel_btn.clicked.connect(self.reject)
+        self._cancel_btn.setText("关闭")
+        self._cancel_btn.clicked.disconnect()
+        self._cancel_btn.clicked.connect(self.reject)
 
     def _on_cancel(self) -> None:
         if self.prep.running:
-            self.cancel_btn.setEnabled(False)
-            self.cancel_btn.setText("正在取消…")
+            self._cancel_btn.setEnabled(False)
+            self._cancel_btn.setText("正在取消…")
             self.prep.cancel()
         else:
             self.reject()

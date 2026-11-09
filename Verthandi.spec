@@ -2,11 +2,17 @@
 
 import PySide6
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_data_files
 
 # 1. 提取需要的资源
 datas = [
     ('app/resources', 'app/resources'),
+    # 随程序分发 LICENSE，关于页"查看许可"在 exe 里打开它
+    ('LICENSE', '.'),
 ]
+
+# qfluentwidgets 自带图标字体与 QSS 资源，缺失时 Fluent 控件图标全部空白
+datas += collect_data_files('qfluentwidgets')
 
 # exe 文件自身的图标：存在才嵌入，缺失时 PyInstaller 用默认图标
 exe_icon = Path(SPECPATH) / 'verthandi.ico'

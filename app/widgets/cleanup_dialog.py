@@ -3,25 +3,23 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import CheckBox, ComboBox, MessageBoxBase
 
 from app.core import cleanup_manager as cm
 from app.core.paths import Paths
 from app.core.settings import Settings
+from app.widgets.fluent_message import question
 
 
-class CleanupDialog(QDialog):
+class CleanupDialog(MessageBoxBase):
     def __init__(
         self,
         paths: Paths,
@@ -29,25 +27,27 @@ class CleanupDialog(QDialog):
         active_log_path: Path | None,
         parent=None,
     ):
-        super().__init__(parent)
+        if parent is None:
+            from PySide6.QtWidgets import QApplication
+
+            parent = QApplication.activeWindow()
+        super().__init__(parent=parent)
         self.paths = paths
         self.settings = settings
         self.active_log_path = active_log_path
 
-        self.setWindowTitle("空间清理中心")
-        self.setMinimumSize(640, 600)
-        self.setModal(True)
+        self._version_checks: list[tuple[CheckBox, cm.VersionInfo]] = []
+        self._runtime_checks: list[tuple[CheckBox, cm.RuntimeEntry]] = []
 
-        self._version_checks: list[tuple[QCheckBox, cm.VersionInfo]] = []
-        self._runtime_checks: list[tuple[QCheckBox, cm.RuntimeEntry]] = []
+        self.widget.setMinimumSize(640, 520)
 
         self._build_ui()
         self._load_all_data()
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout = self.viewLayout
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -75,14 +75,9 @@ class CleanupDialog(QDialog):
 
         self.scroll_layout.addStretch(1)
 
-        # 底部操作区（仅保留关闭）
-        bottom = QHBoxLayout()
-        bottom.addStretch(1)
-        btn_close = QPushButton("关闭")
-        btn_close.setObjectName("ToolbarButton")
-        btn_close.clicked.connect(self.reject)
-        bottom.addWidget(btn_close)
-        layout.addLayout(bottom)
+        # 底部操作区：复用 MessageBoxBase 的取消按钮作为“关闭”
+        self.yesButton.hide()
+        self.cancelButton.setText("关闭")
 
     # ---------- 数据加载与绘制 ----------
 
@@ -132,11 +127,11 @@ class CleanupDialog(QDialog):
         else:
             for v in versions:
                 if v.is_current:
-                    cb = QCheckBox(f"{v.name}  (当前使用中，不可清理)")
+                    cb = CheckBox(f"{v.name}  (当前使用中，不可清理)")
                     cb.setEnabled(False)
                     cb.setChecked(False)
                 else:
-                    cb = QCheckBox(f"{v.name}  ({cm.format_size(v.size_bytes)})")
+                    cb = CheckBox(f"{v.name}  ({cm.format_size(v.size_bytes)})")
                     cb.setChecked(True)
                     cb.stateChanged.connect(self._update_version_stat)
                     self._version_checks.append((cb, v))
@@ -186,13 +181,13 @@ class CleanupDialog(QDialog):
                 if e.detail:
                     text += f"  ·  {e.detail}"
                 if e.is_current:
-                    cb = QCheckBox(f"{text}  （当前使用中）")
+                    cb = CheckBox(f"{text}  （当前使用中）")
                     cb.setEnabled(False)
                 elif not e.deletable:
-                    cb = QCheckBox(text)
+                    cb = CheckBox(text)
                     cb.setEnabled(False)
                 else:
-                    cb = QCheckBox(text)
+                    cb = CheckBox(text)
                     cb.setChecked(True)
                     cb.stateChanged.connect(self._update_runtime_stat)
                     self._runtime_checks.append((cb, e))
@@ -234,11 +229,11 @@ class CleanupDialog(QDialog):
 
         row = QHBoxLayout()
         row.addWidget(QLabel("清理策略："))
-        self.log_combo = QComboBox()
-        self.log_combo.addItem("不清理", 0)
-        self.log_combo.addItem("清理所有历史日志", 1)
-        self.log_combo.addItem("保留最近 7 天", 7)
-        self.log_combo.addItem("保留最近 30 天", 30)
+        self.log_combo = ComboBox()
+        self.log_combo.addItem("不清理", userData=0)
+        self.log_combo.addItem("清理所有历史日志", userData=1)
+        self.log_combo.addItem("保留最近 7 天", userData=7)
+        self.log_combo.addItem("保留最近 30 天", userData=30)
         self.log_combo.currentIndexChanged.connect(self._update_log_btn_state)
         row.addWidget(self.log_combo)
         row.addStretch(1)
@@ -273,18 +268,14 @@ class CleanupDialog(QDialog):
         if not selected:
             return
 
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("确认清理")
-        box.setText(
-            f"确定要永久删除选中的 {len(selected)} 个 hoshimi 版本吗？\n\n此操作无法恢复。"
+        ok = question(
+            self,
+            "确认清理",
+            f"确定要永久删除选中的 {len(selected)} 个 hoshimi 版本吗？\n\n此操作无法恢复。",
+            yes_text="确认清理",
+            danger=True,
         )
-        del_btn = box.addButton("确认清理", QMessageBox.DestructiveRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(del_btn)
-        box.exec()
-
-        if box.clickedButton() is not del_btn:
+        if not ok:
             return
 
         cm.delete_versions(selected, self.paths, self.settings)
@@ -296,19 +287,15 @@ class CleanupDialog(QDialog):
         if not selected:
             return
 
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("确认清理")
-        box.setText(
+        ok = question(
+            self,
+            "确认清理",
             f"确定要永久删除选中的 {len(selected)} 项 runtime 吗？\n\n"
-            "对应版本需要重新执行「初始化」才能启动服务。此操作无法恢复。"
+            "对应版本需要重新执行「初始化」才能启动服务。此操作无法恢复。",
+            yes_text="确认清理",
+            danger=True,
         )
-        del_btn = box.addButton("确认清理", QMessageBox.DestructiveRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(del_btn)
-        box.exec()
-
-        if box.clickedButton() is not del_btn:
+        if not ok:
             return
 
         cm.delete_runtimes(selected)
@@ -321,16 +308,14 @@ class CleanupDialog(QDialog):
             return
 
         label = "所有历史" if days == 1 else f"超过 {days} 天的"
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("确认清理")
-        box.setText(f"确定要永久删除{label}日志吗？\n\n此操作无法恢复。")
-        del_btn = box.addButton("确认清理", QMessageBox.DestructiveRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(del_btn)
-        box.exec()
-
-        if box.clickedButton() is not del_btn:
+        ok = question(
+            self,
+            "确认清理",
+            f"确定要永久删除{label}日志吗？\n\n此操作无法恢复。",
+            yes_text="确认清理",
+            danger=True,
+        )
+        if not ok:
             return
 
         cm.delete_logs(self.paths, self.settings, days, self.active_log_path)

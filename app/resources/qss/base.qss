@@ -14,33 +14,6 @@ QWidget {
     border-right: 1px solid #e5e7eb;
 }
 
-#SidebarTitle {
-    font-size: 16px;
-    font-weight: 600;
-    padding: 4px 8px 12px 8px;
-    color: #111827;
-    background: transparent;
-}
-
-#NavButton {
-    background: transparent;
-    border: none;
-    border-radius: 6px;
-    text-align: left;
-    padding: 8px 10px;
-    color: #4b5563;
-}
-
-#NavButton:hover {
-    background: #f0f2f5;
-}
-
-#NavButton:checked {
-    background: #e6f0ff;
-    color: #1a56db;
-    font-weight: 600;
-}
-
 /* ---------- 页面通用 ---------- */
 
 #PageTitle {
@@ -146,23 +119,10 @@ QWidget {
     font-size: 12px;
 }
 
-/* 日志区工具条 */
-
-QComboBox {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    padding: 3px 8px;
-    min-height: 22px;
-}
-
-QComboBox:hover {
-    border-color: #cbd5e1;
-}
-
-QComboBox::drop-down {
-    border: none;
-    width: 18px;
+/* 下拉框与复选框已换用 qfluentwidgets 组件（自绘样式），不再在此定义。
+   注意：上面的全局 QWidget 规则会把 CheckBox 刷成灰底，这里恢复其透明背景。 */
+CheckBox {
+    background: transparent;
 }
 
 /* 日志文本 */
@@ -203,30 +163,6 @@ QComboBox::drop-down {
     background: #e5e7eb;
     color: #9ca3af;
     border: 1px solid #e5e7eb;
-}
-
-/* ---------- 设置页 Checkbox ---------- */
-
-QCheckBox {
-    background: transparent;
-    spacing: 8px;
-}
-
-QCheckBox::indicator {
-    width: 16px;
-    height: 16px;
-    border-radius: 3px;
-    border: 1px solid #cbd5e1;
-    background: #ffffff;
-}
-
-QCheckBox::indicator:hover {
-    border-color: #93c5fd;
-}
-
-QCheckBox::indicator:checked {
-    background: #2563eb;
-    border-color: #1d4ed8;
 }
 
 /* ---------- 设置页 QSpinBox ---------- */
@@ -337,27 +273,6 @@ QSpinBox::down-button {
 
 #ToolbarButton[variant="switch"]:hover {
     background: #1d4ed8;
-}
-
-/* ---------- 端口折叠开关 ---------- */
-
-QToolButton#PortToggle {
-    background: transparent;
-    border: none;
-    color: #1e40af;
-    padding: 4px 0;
-    font-size: 13px;
-    font-weight: 600;
-}
-
-QToolButton#PortToggle:hover {
-    color: #1d4ed8;
-    text-decoration: underline;
-}
-
-QToolButton#PortToggle::menu-indicator {
-    image: none;
-    width: 0;
 }
 
 /* ---------- QScrollArea ---------- */

@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -36,6 +35,13 @@ from app.core.runtime_layout import (
 from app.core.server_process import ServerProcess, ServerState
 from app.core.settings import ClientEntry, Settings, SettingsStore
 from app.core.switch_client import SwitchError, SwitchOperation
+from app.widgets.fluent_message import (
+    MessageDialog,
+    critical,
+    information,
+    question,
+    warning,
+)
 from app.widgets.log_view import LogView
 from app.widgets.prepare_dialog import PrepareDialog
 from app.widgets.telemetry_dialog import ask_telemetry_consent
@@ -410,7 +416,7 @@ class MainPage(QWidget):
 
         client_exe = Path(client.exe_path)
         if not client_exe.exists():
-            QMessageBox.critical(
+            critical(
                 self,
                 "无法初始化",
                 f"AetherGazer.exe 不存在：\n{client_exe}",
@@ -423,18 +429,14 @@ class MainPage(QWidget):
         self._start_prepare(client_exe.parent)
 
     def _prompt_select_client(self) -> bool:
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Information)
-        box.setWindowTitle("需要选择游戏目录")
-        box.setText("初始化需要指定 AetherGazer.exe 的位置。")
-        box.setInformativeText(
-            "请选择游戏安装目录下的 AetherGazer.exe 文件，而不是文件夹。"
+        ok = question(
+            self,
+            "需要选择游戏目录",
+            "初始化需要指定 AetherGazer.exe 的位置。\n\n"
+            "请选择游戏安装目录下的 AetherGazer.exe 文件，而不是文件夹。",
+            yes_text="浏览…",
         )
-        browse = box.addButton("浏览…", QMessageBox.AcceptRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(browse)
-        box.exec()
-        if box.clickedButton() is not browse:
+        if not ok:
             return False
 
         path, _ = QFileDialog.getOpenFileName(
@@ -447,11 +449,7 @@ class MainPage(QWidget):
             return False
         exe = Path(path)
         if exe.name.lower() != "aethergazer.exe":
-            box = QMessageBox(self)
-            box.setIcon(QMessageBox.Critical)
-            box.setWindowTitle("文件不匹配")
-            box.setText(f"选中的文件不是 AetherGazer.exe：\n{exe.name}")
-            box.exec()
+            critical(self, "文件不匹配", f"选中的文件不是 AetherGazer.exe：\n{exe.name}")
             return False
 
         entry = self.settings.active_client() or ClientEntry(
@@ -470,31 +468,24 @@ class MainPage(QWidget):
 
     def _confirm_prepare(self, client_dir: Path) -> bool:
         ref = resolve_runtime(self.paths, self.settings)
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("初始化运行文件")
-        box.setText(
+        return question(
+            self,
+            "初始化运行文件",
             "初始化将从客户端提取运行文件，可能需要 1–2 分钟。\n"
-            "期间请勿关闭 Verthandi。"
-        )
-        box.setInformativeText(
+            "期间请勿关闭 Verthandi。\n\n"
             f"游戏目录：{client_dir}\n"
             f"hoshimi 版本：{ref.version}\n"
             f"运行文件：{ref.directory}\n\n"
-            "初始化先写入临时目录，完成后再整体替换；失败或取消不会影响现有运行文件。"
+            "初始化先写入临时目录，完成后再整体替换；失败或取消不会影响现有运行文件。",
+            yes_text="开始初始化",
         )
-        start = box.addButton("开始初始化", QMessageBox.AcceptRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(start)
-        box.exec()
-        return box.clickedButton() is start
 
     def _start_prepare(self, client_dir: Path) -> None:
         ref = resolve_runtime(self.paths, self.settings)
         try:
             staging = create_staging(self.paths, self.settings, ref.version)
         except OSError as e:
-            QMessageBox.critical(self, "无法初始化", f"无法创建临时目录：\n{e}")
+            critical(self, "无法初始化", f"无法创建临时目录：\n{e}")
             return
 
         self._preparing = True
@@ -527,7 +518,7 @@ class MainPage(QWidget):
             shutil.rmtree(staging, ignore_errors=True)
             if code == -1:
                 self.log_bus.emit_line(LogSource.APP, "初始化已取消", "warning")
-                QMessageBox.warning(
+                warning(
                     self,
                     "初始化已取消",
                     "初始化被取消，现有运行文件未受影响。",
@@ -536,7 +527,7 @@ class MainPage(QWidget):
                 self.log_bus.emit_line(
                     LogSource.APP, f"初始化失败，退出码 {code}", "error"
                 )
-                QMessageBox.critical(
+                critical(
                     self,
                     "初始化失败",
                     f"hoshimi prepare 退出码 {code}。\n"
@@ -555,7 +546,7 @@ class MainPage(QWidget):
             )
         except RuntimeSwapError as e:
             self.log_bus.emit_line(LogSource.APP, str(e), "error")
-            QMessageBox.critical(
+            critical(
                 self,
                 "初始化未完成",
                 f"{e}\n\n旧的运行文件未被替换。"
@@ -574,7 +565,7 @@ class MainPage(QWidget):
         self._discard_pending()
 
         self.log_bus.emit_line(LogSource.APP, message, "error")
-        QMessageBox.critical(self, "初始化失败", message)
+        critical(self, "初始化失败", message)
 
     def _discard_pending(self) -> None:
         """丢弃未完成的临时目录；正式目录从未被碰过，所以这里没有"恢复"这一步。"""
@@ -650,33 +641,19 @@ class MainPage(QWidget):
         game_running = is_game_running(self.paths.active_client_dir(self.settings))
 
         if game_running and actual == ClientMode.LOCAL:
-            icon, text = (
-                QMessageBox.Warning,
-                (
-                    "游戏正在运行，停止服务会导致客户端断连，\n"
-                    "未保存的进度可能丢失。\n\n确定停止服务吗？"
-                ),
+            text = (
+                "游戏正在运行，停止服务会导致客户端断连，\n"
+                "未保存的进度可能丢失。\n\n确定停止服务吗？"
             )
         elif game_running and actual == ClientMode.OFFICIAL:
-            icon, text = (
-                QMessageBox.Warning,
-                (
-                    "游戏正在运行。当前客户端连接官服，\n"
-                    "停止本地服务不影响游戏连接。\n\n确定停止服务吗？"
-                ),
+            text = (
+                "游戏正在运行。当前客户端连接官服，\n"
+                "停止本地服务不影响游戏连接。\n\n确定停止服务吗？"
             )
         else:
-            icon, text = QMessageBox.Question, "确定要停止 Hoshimi 服务吗？"
+            text = "确定要停止 Hoshimi 服务吗？"
 
-        box = QMessageBox(self)
-        box.setIcon(icon)
-        box.setWindowTitle("停止服务")
-        box.setText(text)
-        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        box.setDefaultButton(QMessageBox.No)
-        box.button(QMessageBox.Yes).setText("停止")
-        box.button(QMessageBox.No).setText("取消")
-        return box.exec() == QMessageBox.Yes
+        return question(self, "停止服务", text, yes_text="停止")
 
     # ---------- 启动游戏 ----------
 
@@ -686,12 +663,12 @@ class MainPage(QWidget):
 
         client = self.settings.active_client()
         if client is None or not client.exe_path:
-            QMessageBox.critical(self, "无法启动游戏", "尚未选择游戏目录")
+            critical(self, "无法启动游戏", "尚未选择游戏目录")
             return
 
         exe = Path(client.exe_path)
         if not exe.exists():
-            QMessageBox.critical(
+            critical(
                 self,
                 "无法启动游戏",
                 f"AetherGazer.exe 不存在：\n{exe}",
@@ -704,7 +681,7 @@ class MainPage(QWidget):
             show_toast(self, "游戏已启动")
             self.game_watcher.refresh()
         else:
-            QMessageBox.critical(self, "无法启动游戏", msg)
+            critical(self, "无法启动游戏", msg)
 
     # ---------- 快捷入口 ----------
 
@@ -713,14 +690,14 @@ class MainPage(QWidget):
         try:
             path.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            QMessageBox.warning(
+            warning(
                 self,
                 "无法打开目录",
                 f"{label}目录创建失败：\n{path}\n\n{e}",
             )
             return
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
-            QMessageBox.warning(
+            warning(
                 self,
                 "无法打开目录",
                 f"系统未能打开目录：\n{path}",
@@ -737,7 +714,7 @@ class MainPage(QWidget):
     def _on_open_gm(self) -> None:
         url = f"http://127.0.0.1:{self.settings.server.http_port}/gm/"
         if not QDesktopServices.openUrl(QUrl(url)):
-            QMessageBox.warning(
+            warning(
                 self,
                 "无法打开 GM 后台",
                 f"系统未能打开浏览器：\n{url}",
@@ -755,7 +732,7 @@ class MainPage(QWidget):
             return
 
         if self.game_watcher.running:
-            QMessageBox.warning(
+            warning(
                 self, "无法切换", "游戏正在运行，请先退出客户端再切换。"
             )
             return
@@ -796,13 +773,11 @@ class MainPage(QWidget):
 
     def _show_switch_checks(self, failures: list, target_label: str) -> None:
         lines = "\n".join(f"• {c.label}：{c.message}" for c in failures)
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("无法切换到" + target_label)
-        box.setText("切换前置检查未通过：")
-        box.setInformativeText(lines)
-        box.setStandardButtons(QMessageBox.Ok)
-        box.exec()
+        warning(
+            self,
+            "无法切换到" + target_label,
+            "切换前置检查未通过：\n" + lines,
+        )
 
     def _confirm_switch(self, target_label: str, checks: list) -> bool:
         # 服务在运行时给额外提示（不阻止）
@@ -813,11 +788,8 @@ class MainPage(QWidget):
                 "如不再需要 GM 后台，建议切换后停止服务以释放端口。"
             )
 
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Question)
-        box.setWindowTitle(f"切换到{target_label}")
-        box.setText(f"将把客户端切换到{target_label}。")
-        box.setInformativeText(
+        box_text = (
+            f"将把客户端切换到{target_label}。\n\n"
             "会修改以下内容：\n"
             "• 客户端 url.txt\n"
             "• resources.assets 中的 SDK 端点\n"
@@ -826,11 +798,7 @@ class MainPage(QWidget):
             f"{extra}\n\n"
             "确定切换吗？"
         )
-        switch_btn = box.addButton("确认切换", QMessageBox.AcceptRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(switch_btn)
-        box.exec()
-        return box.clickedButton() is switch_btn
+        return question(self, f"切换到{target_label}", box_text, yes_text="确认切换")
 
     def _do_switch(self, op: SwitchOperation, target: str, target_label: str) -> None:
         from PySide6.QtCore import Qt as _Qt
@@ -853,13 +821,13 @@ class MainPage(QWidget):
         except SwitchError as e:
             progress.close()
             if e.code == "admin_required":
-                QMessageBox.critical(
+                critical(
                     self,
                     "需要管理员权限",
                     "hosts 中有需要清理的回环映射，请以管理员身份重启 Verthandi 后重试。",
                 )
             else:
-                QMessageBox.critical(self, "切换失败", e.message)
+                critical(self, "切换失败", e.message)
             return
 
         progress.close()
@@ -870,7 +838,7 @@ class MainPage(QWidget):
         self.refresh_status()
 
         if result.needs_relogin:
-            QMessageBox.information(
+            information(
                 self,
                 f"已切换到{target_label}",
                 result.message + "\n\n如遇登录问题，请重新输入账号密码。",
@@ -883,37 +851,28 @@ class MainPage(QWidget):
             self.log_bus.emit_line(
                 LogSource.APP, f"[preflight] {i.label}: {i.message}", "error"
             )
-        short = "\n".join(f"• {i.label}：{i.message}" for i in errors)
-        details = "\n\n".join(
-            f"• {i.label}\n  {i.message}\n  → {i.fix_hint}" for i in errors
-        )
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Critical)
-        box.setWindowTitle("无法启动服务")
-        box.setText(f"启动前检查发现 {len(errors)} 项问题：")
-        box.setInformativeText(short)
-        box.setDetailedText(details)
-        box.setStandardButtons(QMessageBox.Ok)
-        box.exec()
+        # 每条信息只出现一次：问题描述 + 缩进的修复建议
+        lines = [f"启动前检查发现 {len(errors)} 项问题：", ""]
+        for i in errors:
+            lines.append(f"• {i.label}：{i.message}")
+            if i.fix_hint:
+                lines.append(f"  → {i.fix_hint}")
+        information(self, "无法启动服务", "\n".join(lines))
 
     def _confirm_preflight_warnings(self, warnings: list[CheckItem]) -> bool:
         if not warnings:
             return True
 
         short = "\n".join(f"• {i.label}：{i.message}" for i in warnings)
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("启动服务")
-        box.setText("启动前检查有以下提示：")
-        box.setInformativeText(
-            short
-            + "\n\n如果启动服务或游戏时出现问题，请重新执行「初始化」。\n\n仍要启动服务吗？"
+        return question(
+            self,
+            "启动服务",
+            "启动前检查有以下提示：\n\n"
+            + short
+            + "\n\n如果启动服务或游戏时出现问题，请重新执行「初始化」。\n\n仍要启动服务吗？",
+            yes_text="仍要启动",
+            danger=True,
         )
-        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        box.setDefaultButton(QMessageBox.No)
-        box.button(QMessageBox.Yes).setText("仍要启动")
-        box.button(QMessageBox.No).setText("取消")
-        return box.exec() == QMessageBox.Yes
 
     # ---------- 服务状态 / 游戏状态 ----------
 

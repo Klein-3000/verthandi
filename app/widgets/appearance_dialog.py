@@ -6,36 +6,40 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QDialog,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
+from qfluentwidgets import Flyout, FlyoutAnimationType, MessageBoxBase
 
 from app.core import game_config
 from app.widgets.capsule_switch import CapsuleSwitch
+from app.widgets.fluent_message import question
 
 
-class AppearanceDialog(QDialog):
+class AppearanceDialog(MessageBoxBase):
     def __init__(self, base_dir: Path, parent=None):
-        super().__init__(parent)
+        if parent is None:
+            from PySide6.QtWidgets import QApplication
+
+            parent = QApplication.activeWindow()
+        super().__init__(parent=parent)
         self.base_dir = base_dir
 
         self._original_state = False  # False=普通, True=清凉
         self._current_selection = False
         self._config_loaded = False
 
-        self.setWindowTitle("修改角色外观")
-        self.setMinimumSize(560, 560)
-        self.setModal(True)
+        self.widget.setMinimumSize(560, 620)
 
         self._build_ui()
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
+        # 注意：viewLayout 属于 MessageBoxBase，内容全部塞进这里
+        layout = self.viewLayout
+        layout.setContentsMargins(20, 20, 20, 12)
         layout.setSpacing(16)
 
         # 顶部：当前生效状态（胶囊 Tag 风格）
@@ -62,7 +66,7 @@ class AppearanceDialog(QDialog):
 
         status_layout.addStretch(1)  # 把帮助按钮推到最右边
 
-        # 新增：帮助按钮（圆圈带 ?）
+        # 帮助按钮（圆圈带 ?）——点击弹出 Flyout 浮出控件而非弹窗
         self.help_btn = QPushButton("?")
         self.help_btn.setCursor(Qt.PointingHandCursor)
         self.help_btn.setFixedSize(24, 24)  # 固定大小，保证是正圆
@@ -132,23 +136,12 @@ class AppearanceDialog(QDialog):
         layout.addLayout(img_layout)
         layout.addStretch(1)
 
-        # 底部操作
-        bottom = QHBoxLayout()
-        bottom.addStretch(1)
-
-        self.btn_close = QPushButton("关闭")
-        self.btn_close.setObjectName("ToolbarButton")
-        self.btn_close.clicked.connect(self.reject)
-        bottom.addWidget(self.btn_close)
-
-        self.btn_save = QPushButton("保存并应用")
-        self.btn_save.setObjectName("ToolbarButton")
-        self.btn_save.setProperty("variant", "switch")  # 蓝色焦点按钮
-        self.btn_save.setEnabled(False)
-        self.btn_save.clicked.connect(self._on_save)
-        bottom.addWidget(self.btn_save)
-
-        layout.addLayout(bottom)
+        # 底部操作：复用 MessageBoxBase 的按钮区
+        self.yesButton.setText("保存并应用")
+        self.yesButton.setEnabled(False)
+        self.yesButton.clicked.disconnect()
+        self.yesButton.clicked.connect(self._on_save)
+        self.cancelButton.setText("关闭")
 
     def showEvent(self, event):
         """窗口真正显示后再加载配置和滑块状态，防止宽高未确定导致滑块异常"""
@@ -235,7 +228,7 @@ class AppearanceDialog(QDialog):
 
     def _update_save_button(self):
         has_changes = self._current_selection != self._original_state
-        self.btn_save.setEnabled(has_changes)
+        self.yesButton.setEnabled(has_changes)
 
     def _on_save(self):
         is_cool = self._current_selection
@@ -245,30 +238,41 @@ class AppearanceDialog(QDialog):
             self._original_state = is_cool
             self._update_status_tag(self._original_state)
             self._update_save_button()
-            QMessageBox.information(
-                self, "成功", "外观配置已成功保存，重新进入游戏即可生效。"
+            Flyout.create(
+                title="保存成功",
+                content="外观配置已保存，重新进入游戏即可生效。",
+                target=self.yesButton,
+                parent=self,
+                isClosable=True,
+                aniType=FlyoutAnimationType.PULL_UP,
             )
         else:
-            QMessageBox.warning(self, "保存失败", err_msg)
+            from app.widgets.fluent_message import warning
+
+            warning(self, "保存失败", err_msg)
 
     def closeEvent(self, event):
         if self._current_selection != self._original_state:
-            reply = QMessageBox.question(
+            if not question(
                 self,
                 "未保存的更改",
                 "你有未保存的外观修改，确定要放弃修改并关闭吗？",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if reply != QMessageBox.Yes:
+                yes_text="放弃修改",
+                danger=True,
+            ):
                 event.ignore()
                 return
         super().closeEvent(event)
 
     def _show_help(self):
-        QMessageBox.information(
-            self,
-            "外观修改提示",
-            "修改角色外观并非对所有角色生效。\n\n"
-            "例如：陵光的外观保持不变，而帕尔瓦蒂的外观会发生变化。",
+        Flyout.create(
+            title="外观修改提示",
+            content=(
+                "修改角色外观并非对所有角色生效。\n\n"
+                "例如：陵光的外观保持不变，而帕尔瓦蒂的外观会发生变化。"
+            ),
+            target=self.help_btn,
+            parent=self,
+            isClosable=True,
+            aniType=FlyoutAnimationType.PULL_UP,
         )

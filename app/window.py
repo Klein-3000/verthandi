@@ -6,7 +6,6 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
-    QMessageBox,
     QProgressDialog,
     QStackedWidget,
     QWidget,
@@ -136,15 +135,15 @@ class MainWindow(QMainWindow):
         if self._closing:
             event.ignore()
             return
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("退出 Verthandi")
-        box.setText("服务仍在运行，退出将停止服务。\n\n确定退出吗？")
-        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        box.setDefaultButton(QMessageBox.No)
-        box.button(QMessageBox.Yes).setText("停止并退出")
-        box.button(QMessageBox.No).setText("取消")
-        if box.exec() != QMessageBox.Yes:
+        from app.widgets.fluent_message import question
+
+        ok = question(
+            self,
+            "退出 Verthandi",
+            "服务仍在运行，退出将停止服务。\n\n确定退出吗？",
+            yes_text="停止并退出",
+        )
+        if not ok:
             event.ignore()
             return
         event.ignore()

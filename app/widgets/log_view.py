@@ -4,7 +4,6 @@ from collections import deque
 from datetime import datetime
 
 from PySide6.QtWidgets import (
-    QComboBox,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
@@ -12,6 +11,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import ComboBox
 
 from app.core.log_bus import LogBus, LogSource
 
@@ -50,13 +50,13 @@ class LogView(QWidget):
         toolbar.setSpacing(8)
 
         toolbar.addWidget(QLabel("来源:"))
-        self.filter_combo = QComboBox()
-        self.filter_combo.addItem("hoshimi", LogSource.HOSHIMI.value)
-        self.filter_combo.addItem("全部", "*")
-        self.filter_combo.addItem("switch", LogSource.SWITCH.value)
-        self.filter_combo.addItem("prepare", LogSource.PREPARE.value)
-        self.filter_combo.addItem("app", LogSource.APP.value)
-        self.filter_combo.addItem("game", LogSource.GAME.value)
+        self.filter_combo = ComboBox()
+        self.filter_combo.addItem("hoshimi", userData=LogSource.HOSHIMI.value)
+        self.filter_combo.addItem("全部", userData="*")
+        self.filter_combo.addItem("switch", userData=LogSource.SWITCH.value)
+        self.filter_combo.addItem("prepare", userData=LogSource.PREPARE.value)
+        self.filter_combo.addItem("app", userData=LogSource.APP.value)
+        self.filter_combo.addItem("game", userData=LogSource.GAME.value)
         self.filter_combo.currentIndexChanged.connect(self._on_filter_changed)
         toolbar.addWidget(self.filter_combo)
 
