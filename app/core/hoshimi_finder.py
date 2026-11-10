@@ -21,6 +21,17 @@ def version_key(name: str) -> tuple:
     return tuple(parts)
 
 
+def scan_versions(bin_dir: Path) -> list[str]:
+    """列出 bin/ 下所有可用的 hoshimi 版本目录（含 hoshimi.exe），按版本降序。"""
+    if not bin_dir.exists():
+        return []
+    versions = [
+        d.name for d in bin_dir.iterdir() if d.is_dir() and (d / "hoshimi.exe").exists()
+    ]
+    versions.sort(key=version_key, reverse=True)
+    return versions
+
+
 def find_hoshimi_exe(paths: Paths, settings: Settings) -> tuple[Path, str, bool]:
     """定位 hoshimi.exe。
 

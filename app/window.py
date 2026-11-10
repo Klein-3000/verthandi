@@ -95,6 +95,7 @@ class MainWindow(QMainWindow):
 
         self.settings_page.settings_changed.connect(self._on_settings_changed)
         self.settings_page.request_init.connect(self._on_request_init)
+        self.main_page.version_changed.connect(self.settings_page.refresh_version)
 
     def _on_nav_changed(self, index: int) -> None:
         if not (0 <= index < self.stack.count()):

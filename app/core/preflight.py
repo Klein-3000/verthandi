@@ -231,7 +231,7 @@ def _check_prepare_freshness(paths: Paths, settings: Settings) -> list[CheckItem
             )
         )
     elif manifest.version and ref.version != manifest.version:
-        # 按版本分目录时天然一致，只有自定义目录模式才会走到这里
+        # 正常情况不会发生（版本与目录同源），仅防御手工改动过的数据
         items.append(
             CheckItem(
                 "prepare-version",

@@ -75,7 +75,8 @@ Verthandi/
 
 runtime 目录由 hoshimi 版本自动派生：切换 hoshimi 版本即切换对应 runtime，
 旧版本的运行文件原地保留、随时切回，无需任何移动或复制。
-若曾在旧版本中使用自定义 runtime 路径，程序会在设置里保留「固定目录」模式。
+若曾在旧版本中使用自定义 runtime 路径，首次启动会自动把它迁入
+`runtimes/<版本>/runtime`；迁移失败时数据原地保留，重新「初始化」即可。
 
 ### 🎨 自定义图标
 
@@ -102,10 +103,12 @@ runtime 目录由 hoshimi 版本自动派生：切换 hoshimi 版本即切换对
 
 ### 📶 Hoshimi 0.0.8 的使用统计询问
 
-hoshimi 0.0.8 首次启动会询问是否启用它自己的「使用统计」（遥测，数据发送至第三方 Umami Cloud）。由于 Verthandi 隐藏了 hoshimi 的控制台，这个询问会转达为 Verthandi 的弹窗——**这是 Hoshimi（第三方服务端程序）自身的功能，与 Verthandi 无关**，是否同意由你决定，默认拒绝。
+hoshimi 0.0.8 起首次启动会询问是否启用它自己的「使用统计」（遥测，数据发送至第三方 Umami Cloud），并阻塞等待作答。由于 Verthandi 隐藏了 hoshimi 的控制台，这个问题改由 **Verthandi 在启动服务前弹窗转达**——**这是 Hoshimi（第三方服务端程序）自身的功能，与 Verthandi 无关**，默认「保持关闭」。
 
-- 你的选择由 hoshimi 记录在 `home/config.json`，之后不会再询问；
-- 之后如需更改，可编辑 `home/config.json` 将 `telemetry_enabled` 设为 `false`。
+- 选择会直接写入 `home/config.json`（`telemetry_enabled`，开启时还会写 `telemetry_consent`），hoshimi 见键即不再询问，因此不会卡在启动阶段；
+- 弹窗里可以勾选「记住我的选择，不再询问」；不勾选就下次启动再确认一次；
+- 之后随时可在设置页「行为」卡片里打开「允许 Hoshimi 发送使用统计」（开启前会再确认一次收集范围），开关从下次启动服务生效；
+- 多个版本共用同一份 `home/config.json`，设一次对所有 0.0.8+ 版本生效；0.0.3 之类不带遥测的版本不受影响（开关会自动置灰）。
 
 ---
 

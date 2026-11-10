@@ -16,14 +16,10 @@ from app.core.settings import Settings
 
 RUNTIME_SUBDIR = "runtime"
 MANIFEST_NAME = "prepare.json"
-CUSTOM_MANIFEST_NAME = ".custom-prepare.json"
 STAGING_PREFIX = ".staging-"
 PREV_PREFIX = ".prev-"
 UNKNOWN_VERSION = "unknown"
 MANIFEST_SCHEMA = 1
-
-MODE_PER_VERSION = "per_version"
-MODE_CUSTOM = "custom"
 
 RUNTIME_REQUIRED_FILES = (
     "protocol_map.json",
@@ -105,22 +101,15 @@ def _as_int(value: Any, default: int = 0) -> int:
 
 @dataclass(frozen=True)
 class RuntimeRef:
-    """一次「当前该用哪个 runtime」的解析结果，全项目唯一真相源。"""
+    """一次「当前该用哪个 runtime」的解析结果，全项目唯一真相源。
+
+    目录恒为 runtimes/<version>/runtime，按版本存放，切版本即切目录。
+    """
 
     version: str
     exe: Path
     directory: Path
     auto: bool
-    mode: str
-
-    @property
-    def is_custom(self) -> bool:
-        return self.mode == MODE_CUSTOM
-
-    @property
-    def version_dir(self) -> Path | None:
-        """runtimes/<version>/；自定义模式下没有这一层。"""
-        return None if self.is_custom else self.directory.parent
 
     @property
     def exists(self) -> bool:
@@ -131,26 +120,15 @@ def runtime_root(paths: Paths, settings: Settings) -> Path:
     return paths.resolve(settings.paths.runtime_root)
 
 
-def runtime_dir_for(paths: Paths, settings: Settings, version: str) -> Path:
-    if settings.paths.runtime_mode == MODE_CUSTOM:
-        return paths.resolve(settings.paths.custom_runtime_dir or "runtime")
-    return runtime_root(paths, settings) / (version or UNKNOWN_VERSION) / RUNTIME_SUBDIR
-
-
 def resolve_runtime(paths: Paths, settings: Settings) -> RuntimeRef:
     """版本与 runtime 目录同源派生：切版本即切目录，不再有第二处状态。"""
     exe, version, auto = find_hoshimi_exe(paths, settings)
-    if settings.paths.runtime_mode == MODE_CUSTOM:
-        directory = paths.resolve(settings.paths.custom_runtime_dir or "runtime")
-        return RuntimeRef(version, exe, directory, auto, MODE_CUSTOM)
     version = version or UNKNOWN_VERSION
     directory = runtime_root(paths, settings) / version / RUNTIME_SUBDIR
-    return RuntimeRef(version, exe, directory, auto, MODE_PER_VERSION)
+    return RuntimeRef(version, exe, directory, auto)
 
 
 def manifest_path(paths: Paths, settings: Settings, ref: RuntimeRef) -> Path:
-    if ref.is_custom:
-        return runtime_root(paths, settings) / CUSTOM_MANIFEST_NAME
     return ref.directory.parent / MANIFEST_NAME
 
 
@@ -338,19 +316,17 @@ class MigrationResult:
 
 
 def migrate_legacy(paths: Paths, settings: Settings) -> MigrationResult:
-    """把 v1 的单个 runtime/ 目录搬进 runtimes/<version>/runtime。
+    """把旧的单个 runtime 目录搬进 runtimes/<version>/runtime。
 
-    只移动目录、不复制；失败时降级为自定义目录模式，绝不阻断启动。
+    旧目录的来源：v1 的 runtimeDir，或曾被降级写成 customRuntimeDir 的路径。
+    只移动目录、不复制；失败时不动数据、不降级，提示用户重新初始化。
     """
-    if settings.paths.runtime_mode != MODE_PER_VERSION:
-        return MigrationResult()
-
     root = runtime_root(paths, settings)
     if _has_version_dirs(root):
         return MigrationResult()
 
     legacy = paths.resolve(settings.paths.custom_runtime_dir or "runtime")
-    if not legacy.is_dir():
+    if not legacy.is_dir() or legacy == root:
         return MigrationResult()
 
     version = _legacy_version(paths, settings)
@@ -359,12 +335,12 @@ def migrate_legacy(paths: Paths, settings: Settings) -> MigrationResult:
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         _move_dir(legacy, target)
-    except OSError as e:
-        settings.paths.runtime_mode = MODE_CUSTOM
-        settings.paths.custom_runtime_dir = paths.relativize(legacy)
+    except OSError:
+        # 不再降级成"固定目录"模式：数据原地保留，等用户手动初始化
         return MigrationResult(
-            changed=True,
-            message=f"旧 runtime 无法迁移到 runtimes/（{e}），已改为固定目录模式：{legacy}",
+            changed=False,
+            message=f"旧 runtime 位于 {legacy}，无法自动迁入 runtimes/，"
+            "请点击「初始化」重新生成",
         )
 
     complete, missing = validate_runtime(target)

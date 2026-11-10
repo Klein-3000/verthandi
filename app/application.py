@@ -82,6 +82,8 @@ class VerthandiApplication(QApplication):
         if result.changed:
             self.settings_store.save(self.settings)
             self.log_bus.emit_line(LogSource.APP, result.message, "info")
+        elif result.message:
+            self.log_bus.emit_line(LogSource.APP, result.message, "warning")
 
         removed = cleanup_staging(self.paths, self.settings)
         if removed:

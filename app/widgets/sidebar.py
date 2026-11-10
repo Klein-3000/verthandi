@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import QFrame, QVBoxLayout
 from qfluentwidgets import (
     FluentIcon,
     NavigationInterface,
     NavigationItemPosition,
 )
+
+from app.widgets.icons import PANEL_LEFT
+
+# 折叠按钮的提示文字（qfluentwidgets 自带的是英文 Open/Close Navigation）
+_TIP_COLLAPSED = "展开导航栏"
+_TIP_EXPANDED = "折叠导航栏"
 
 # (routeKey, 图标, 文本, 位置)，顺序即 QStackedWidget 索引
 _NAV_ITEMS: tuple[tuple[str, FluentIcon, str, NavigationItemPosition], ...] = (
@@ -54,6 +60,32 @@ class Sidebar(QFrame):
                 position=position,
                 tooltip=text,
             )
+
+        self._init_menu_button()
+
+    def _init_menu_button(self) -> None:
+        """折叠按钮换成截图里的图标，tooltip 中文化。
+
+        qfluentwidgets 会在 expand()/collapse() 里把 tooltip 写成英文
+        "Close/Open Navigation"：展开时同步改、收起时是动画结束后才重置，
+        所以①监听 displayModeChanged；②点击后立刻补一次（用单次定时器挪到
+        toggle() 之后执行），保证悬停时看到的中文不会闪回英文。
+        """
+        panel = self._nav.panel
+        panel.menuButton.setIcon(PANEL_LEFT)
+        panel.returnButton.setToolTip("返回")
+        panel.displayModeChanged.connect(lambda _: self._sync_menu_button())
+        panel.menuButton.clicked.connect(
+            lambda: QTimer.singleShot(0, self._sync_menu_button)
+        )
+        self._sync_menu_button()
+
+    def _sync_menu_button(self) -> None:
+        panel = self._nav.panel
+        panel.menuButton.setIcon(PANEL_LEFT)
+        # expand 属性在 expand()/collapse() 里是同步写入的，比 displayMode 更即时
+        expanded = bool(panel.expandAni.property("expand"))
+        panel.menuButton.setToolTip(_TIP_EXPANDED if expanded else _TIP_COLLAPSED)
 
     def set_current(self, index: int) -> None:
         """程序化选中某项（不发 onClick，但保持 currentChanged 信号语义）。"""

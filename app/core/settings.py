@@ -93,14 +93,18 @@ class ServerConfig:
 
 @dataclass
 class PathsConfig:
-    """runtime 按版本存放在 runtime_root 下；custom_runtime_dir 仅自定义模式使用。"""
+    """runtime 恒按版本存放在 runtime_root/<版本>/runtime 下。
+
+    custom_runtime_dir 是旧版遗留字段：v1 的 runtimeDir，或曾经的
+    「固定目录」模式路径；现在只作为 migrate_legacy 的迁移来源，
+    正常流程不再读取它。
+    """
 
     bin_dir: str = "bin"
     home_dir: str = "home"
     logs_dir: str = "logs"
     client_switch_dir: str = "home/data/client-switch"
     runtime_root: str = "runtimes"
-    runtime_mode: str = "per_version"  # per_version / custom
     custom_runtime_dir: str = "runtime"
 
     def to_dict(self) -> dict[str, Any]:
@@ -110,26 +114,17 @@ class PathsConfig:
             "logsDir": self.logs_dir,
             "clientSwitchDir": self.client_switch_dir,
             "runtimeRoot": self.runtime_root,
-            "runtimeMode": self.runtime_mode,
             "customRuntimeDir": self.custom_runtime_dir,
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PathsConfig:
         default = cls()
-        mode = _as_str(d.get("runtimeMode"))
+        # 旧版 runtimeDir（v1）：不是默认值就当作待迁移的旧目录保留下来
         custom = _as_str(d.get("customRuntimeDir"))
-
-        if not mode:
-            # v1：只有一个 runtimeDir。等于默认值就按版本分目录（走迁移），
-            # 明显是自定义路径的直接保留为自定义模式。
-            legacy = _as_str(d.get("runtimeDir"), default.custom_runtime_dir)
-            if legacy in ("", "runtime"):
-                mode, custom = "per_version", "runtime"
-            else:
-                mode, custom = "custom", legacy
-        if mode not in ("per_version", "custom"):
-            mode = "per_version"
+        legacy = _as_str(d.get("runtimeDir"))
+        if legacy and legacy not in ("", "runtime"):
+            custom = legacy
 
         return cls(
             bin_dir=_as_str(d.get("binDir"), default.bin_dir),
@@ -139,7 +134,6 @@ class PathsConfig:
                 d.get("clientSwitchDir"), default.client_switch_dir
             ),
             runtime_root=_as_str(d.get("runtimeRoot"), default.runtime_root),
-            runtime_mode=mode,
             custom_runtime_dir=custom or default.custom_runtime_dir,
         )
 
@@ -200,6 +194,8 @@ class BehaviorConfig:
     log_to_file: bool = False
     # hoshimi 的服务日志（--log-dir logs/hoshimi/<version>/）；默认关，即 --no-log
     hoshimi_log: bool = False
+    # 是否已经就 hoshimi 的遥测问过用户；False 时下次启动会再提醒（不含"已开启"）
+    telemetry_prompted: bool = False
     backend: str = "powershell"
 
     def to_dict(self) -> dict[str, Any]:
@@ -209,6 +205,7 @@ class BehaviorConfig:
             "autoConfirmFirstLaunch": self.auto_confirm_first_launch,
             "logToFile": self.log_to_file,
             "hoshimiLog": self.hoshimi_log,
+            "telemetryPrompted": self.telemetry_prompted,
             "backend": self.backend,
         }
 
@@ -223,6 +220,7 @@ class BehaviorConfig:
             auto_confirm_first_launch=_as_bool(d.get("autoConfirmFirstLaunch"), True),
             log_to_file=_as_bool(d.get("logToFile"), False),
             hoshimi_log=_as_bool(d.get("hoshimiLog"), False),
+            telemetry_prompted=_as_bool(d.get("telemetryPrompted"), False),
             backend=backend,
         )
 

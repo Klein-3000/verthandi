@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -14,10 +14,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import ComboBox
 
 from app.core.client_state import ClientMode, client_fingerprint, read_client_mode
 from app.core.game_process import GameWatcher, is_game_running, launch_game
-from app.core.hoshimi_finder import find_hoshimi_exe
+from app.core.hoshimi_finder import scan_versions
 from app.core.log_bus import LogBus, LogSource
 from app.core.paths import Paths
 from app.core.preflight import CheckItem, Severity, run_preflight
@@ -35,6 +36,11 @@ from app.core.runtime_layout import (
 from app.core.server_process import ServerProcess, ServerState
 from app.core.settings import ClientEntry, Settings, SettingsStore
 from app.core.switch_client import SwitchError, SwitchOperation
+from app.core.telemetry_config import (
+    read_telemetry,
+    supports_telemetry,
+    write_telemetry,
+)
 from app.widgets.fluent_message import (
     MessageDialog,
     critical,
@@ -49,6 +55,9 @@ from app.widgets.toast import show_toast
 
 
 class MainPage(QWidget):
+    # 本页切换了 hoshimi 版本（设置页需要同步下拉框与 runtime 行）
+    version_changed = Signal()
+
     def __init__(
         self,
         base_dir: Path,
@@ -92,7 +101,7 @@ class MainPage(QWidget):
         self.server_process.state_changed.connect(self._on_server_state)
         self.server_process.waiting_for_confirm.connect(self._on_waiting_confirm)
         self.server_process.confirm_resolved.connect(self._on_confirm_resolved)
-        self.server_process.telemetry_prompt.connect(self._on_telemetry_prompt)
+        self.server_process.telemetry_fallback.connect(self._on_telemetry_fallback)
         self.game_watcher.running_changed.connect(self._on_game_running_changed)
 
     # ---------- 顶部栏 ----------
@@ -182,9 +191,9 @@ class MainPage(QWidget):
     def _on_confirm_clicked(self) -> None:
         self.server_process.send_enter()
 
-    def _on_telemetry_prompt(self) -> None:
-        agree = ask_telemetry_consent(self)
-        self.server_process.answer_telemetry(agree)
+    def _on_telemetry_fallback(self) -> None:
+        """兜底代答发生后提示一次：说明配置没生效，用户仍可在设置页调整。"""
+        show_toast(self, "已按当前设置代为答复 Hoshimi 使用统计")
 
     # ---------- 状态卡片 / 日志卡片 ----------
 
@@ -214,10 +223,19 @@ class MainPage(QWidget):
             k = QLabel(label)
             k.setObjectName("StatusKey")
             k.setFixedWidth(110)
+            row.addWidget(k)
+            if key == "version":
+                # 版本可从本页直接切换（与设置页同一份数据、同一套写入逻辑）
+                self.version_combo = ComboBox()
+                self.version_combo.setFixedWidth(250)
+                self.version_combo.currentIndexChanged.connect(self._on_version_changed)
+                row.addWidget(self.version_combo)
+                row.addStretch(1)
+                box.addLayout(row)
+                continue
             v = QLabel("—")
             v.setObjectName("StatusValue")
             v.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            row.addWidget(k)
             row.addWidget(v, 1)
             box.addLayout(row)
             self._status_values[key] = v
@@ -268,14 +286,6 @@ class MainPage(QWidget):
             ClientMode.UNKNOWN: "Unknown",
         }.get(actual, "Unknown")
 
-        _exe, actual_version, auto_selected = find_hoshimi_exe(self.paths, s)
-        if actual_version:
-            if auto_selected:
-                version_text = f"{actual_version}（自动选择）"
-            else:
-                version_text = actual_version
-        else:
-            version_text = "—"
         home = self.paths.home_dir(s)
         ref = resolve_runtime(self.paths, s)
         manifest = read_manifest(self.paths, s, ref) if ref.exists else None
@@ -291,7 +301,6 @@ class MainPage(QWidget):
 
         self._status_values["client"].setText(client_text)
         self._status_values["connection"].setText(connection_text)
-        self._status_values["version"].setText(version_text)
         self._status_values["home"].setText(str(home))
         self._status_values["runtime"].setText(runtime_text)
         self._status_values["ports"].setText(ports_text)
@@ -304,6 +313,73 @@ class MainPage(QWidget):
 
         self._refresh_switch_btn(actual)
         self._refresh_runtime_state()
+        self._refresh_version_combo()
+
+    def _refresh_version_combo(self) -> None:
+        """重建版本下拉框。条目与设置页一致：自动选择 + 各版本（+ 目录缺失）。"""
+        versions = scan_versions(self.paths.bin_dir(self.settings))
+        current = self.settings.server.version
+
+        self.version_combo.blockSignals(True)
+        try:
+            self.version_combo.clear()
+            if versions:
+                self.version_combo.addItem(f"自动选择最新（{versions[0]}）", userData="")
+            for v in versions:
+                self.version_combo.addItem(v, userData=v)
+            if current and current not in versions:
+                self.version_combo.addItem(f"{current}（目录缺失）", userData=current)
+            if not self.version_combo.count():
+                self.version_combo.addItem("未找到 hoshimi", userData=None)
+
+            idx = self.version_combo.findData(current) if current else 0
+            self.version_combo.setCurrentIndex(max(min(idx, self.version_combo.count() - 1), 0))
+        finally:
+            self.version_combo.blockSignals(False)
+
+        self._apply_version_combo_state()
+
+    def _apply_version_combo_state(self) -> None:
+        """版本下拉框的可用性：没有可选版本、或服务不是停止态时锁定。"""
+        has_versions = bool(scan_versions(self.paths.bin_dir(self.settings)))
+        stopped = self.server_process.state == ServerState.STOPPED
+        self.version_combo.setEnabled(has_versions and stopped)
+        if not has_versions:
+            self.version_combo.setToolTip("bin 目录下没有可用的 hoshimi")
+        elif not stopped:
+            self.version_combo.setToolTip("服务运行中，停止服务后可切换版本")
+        else:
+            self.version_combo.setToolTip("切换 hoshimi 版本（下次启动服务生效）")
+
+    def _on_version_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        # 服务已启动过就不能再切版本，避免"看到的版本"和"正在跑的版本"不一致
+        if self.server_process.state != ServerState.STOPPED:
+            self.refresh_status()
+            return
+
+        data = self.version_combo.currentData()
+        if data is None:
+            return
+        if data == "":
+            versions = scan_versions(self.paths.bin_dir(self.settings))
+            if not versions:
+                return
+            new_version = versions[0]
+        else:
+            new_version = data
+
+        if new_version == self.settings.server.version:
+            return
+
+        self.settings.server.version = new_version
+        self.settings_store.save(self.settings)
+        self.log_bus.emit_line(
+            LogSource.APP, f"hoshimi 版本已切换：{new_version}", "info"
+        )
+        self.refresh_status()
+        self.version_changed.emit()
 
     def _refresh_switch_btn(self, actual: ClientMode) -> None:
         if actual == ClientMode.LOCAL:
@@ -624,6 +700,7 @@ class MainPage(QWidget):
                     "当前客户端连接官服，本地服务仅供 GM 后台使用",
                     "info",
                 )
+            self._ensure_telemetry()
             sp.start()
             return
 
@@ -632,6 +709,48 @@ class MainPage(QWidget):
 
         if self._confirm_stop():
             sp.stop()
+
+    def _ensure_telemetry(self) -> None:
+        """启动前把 hoshimi 的遥测答复写进 home/config.json。
+
+        必须在 serve 之前完成：hoshimi 的询问没有换行结尾、且会一直阻塞在
+        stdin 上，Verthandi 既读不到也答不上，只会表现为"启动中"卡死。
+        """
+        ref = resolve_runtime(self.paths, self.settings)
+        if not supports_telemetry(ref.version):
+            return
+
+        state = read_telemetry(self.paths, self.settings)
+        if state is True:
+            # 已开启就没什么可问的，只补一次"已答复"标记
+            self._mark_telemetry_prompted()
+            return
+        if self.settings.behavior.telemetry_prompted and state is not None:
+            return
+
+        enabled, remember = ask_telemetry_consent(self, ref.version, state)
+        ok, err = write_telemetry(self.paths, self.settings, enabled)
+        if remember:
+            self._mark_telemetry_prompted()
+        if not ok:
+            warning(
+                self,
+                "遥测选择未能保存",
+                f"无法写入 hoshimi 配置文件：\n{err}\n\n"
+                "服务仍会启动，届时 Verthandi 会按当前设置代为答复。",
+            )
+            return
+        self.log_bus.emit_line(
+            LogSource.APP,
+            "Hoshimi 使用统计：" + ("已允许发送" if enabled else "已关闭"),
+            "info",
+        )
+
+    def _mark_telemetry_prompted(self) -> None:
+        if self.settings.behavior.telemetry_prompted:
+            return
+        self.settings.behavior.telemetry_prompted = True
+        self.settings_store.save(self.settings)
 
     def _confirm_stop(self) -> bool:
         if not self.settings.behavior.confirm_before_stop_server:
@@ -880,6 +999,8 @@ class MainPage(QWidget):
         self._apply_server_state(ServerState(state))
 
     def _apply_server_state(self, state: ServerState) -> None:
+        # 只要点过"启动服务"（STARTING 起）就锁定版本，避免用户错认正在运行的版本
+        self._apply_version_combo_state()
         if state == ServerState.STOPPED:
             self.server_btn.setText("启动服务")
             self.server_btn.setEnabled(True)

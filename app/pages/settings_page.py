@@ -29,20 +29,22 @@ from app.core import cleanup_manager as cm
 from app.core import hoshimi_importer
 from app.core.client_state import client_fingerprint
 from app.core.game_process import GameWatcher
-from app.core.hoshimi_finder import version_key
+from app.core.hoshimi_finder import scan_versions
 from app.core.log_bus import LogBus, LogSource, SessionLogWriter
 from app.core.paths import Paths
 from app.core.port_check import PortResult, check_port
 from app.core.runtime_layout import (
-    MODE_CUSTOM,
-    MODE_PER_VERSION,
     read_manifest,
     resolve_runtime,
     runtime_root,
-    validate_runtime,
 )
 from app.core.server_process import ServerProcess, ServerState
 from app.core.settings import ClientEntry, Settings, SettingsStore
+from app.core.telemetry_config import (
+    read_telemetry,
+    supports_telemetry,
+    write_telemetry,
+)
 from app.widgets.cleanup_dialog import CleanupDialog
 from app.widgets.expand_card import ExpandCard
 from app.widgets.fluent_message import (
@@ -52,19 +54,9 @@ from app.widgets.fluent_message import (
     question,
     warning,
 )
+from app.widgets.telemetry_dialog import confirm_enable_telemetry
 from app.widgets.toast import show_toast
 from app.widgets.version_input_dialog import VersionInputDialog
-
-
-def _scan_versions(bin_dir: Path) -> list[str]:
-    if not bin_dir.exists():
-        return []
-    versions = []
-    for d in bin_dir.iterdir():
-        if d.is_dir() and (d / "hoshimi.exe").exists():
-            versions.append(d.name)
-    versions.sort(key=version_key, reverse=True)
-    return versions
 
 
 class SettingsPage(QWidget):
@@ -228,7 +220,7 @@ class SettingsPage(QWidget):
     def _build_port_card(self) -> ExpandCard:
         """端口（高级设置）：独立的可展开卡片（Fluent 风格）。"""
         card = ExpandCard(
-            FIF.GLOBE, "端口（高级设置）", "默认 25565，仅在需要时修改"
+            FIF.GLOBE, "端口（高级设置）", "修改服务端口，通常无需改动"
         )
 
         body = QWidget()
@@ -387,7 +379,78 @@ class SettingsPage(QWidget):
         hint2.setWordWrap(True)
         box.addWidget(hint2)
 
+        self.telemetry_checkbox = CheckBox("允许 Hoshimi 发送使用统计")
+        self.telemetry_checkbox.toggled.connect(self._on_telemetry_toggled)
+        box.addWidget(self.telemetry_checkbox)
+
+        self.telemetry_hint = QLabel("")
+        self.telemetry_hint.setObjectName("MutedText")
+        self.telemetry_hint.setWordWrap(True)
+        box.addWidget(self.telemetry_hint)
+        self._refresh_telemetry_row()
+
         return card
+
+    # ---------- Hoshimi 使用统计 ----------
+
+    def _telemetry_version(self) -> str:
+        return resolve_runtime(self.paths, self.settings).version
+
+    def _refresh_telemetry_row(self) -> None:
+        version = self._telemetry_version()
+        supported = supports_telemetry(version)
+        enabled = read_telemetry(self.paths, self.settings) is True
+
+        self.telemetry_checkbox.blockSignals(True)
+        self.telemetry_checkbox.setChecked(enabled)
+        self.telemetry_checkbox.blockSignals(False)
+        self.telemetry_checkbox.setEnabled(supported)
+
+        if supported:
+            self.telemetry_hint.setText(
+                "由 hoshimi 自身上报启动与运行信息（含设备 HWID 哈希），"
+                "与 Verthandi 无关。开关直接写入 hoshimi 的配置文件，"
+                "从下次启动服务开始生效。"
+            )
+        else:
+            self.telemetry_hint.setText(
+                "当前 hoshimi 版本不带使用统计（0.0.8 起才引入），此项无效。"
+            )
+
+    def _on_telemetry_toggled(self, checked: bool) -> None:
+        if not supports_telemetry(self._telemetry_version()):
+            return
+
+        def revert() -> None:
+            self.telemetry_checkbox.blockSignals(True)
+            self.telemetry_checkbox.setChecked(not checked)
+            self.telemetry_checkbox.blockSignals(False)
+
+        # 开启涉及设备 HWID 哈希，先让用户看清范围
+        if checked and not confirm_enable_telemetry(self, self._telemetry_version()):
+            revert()
+            return
+
+        ok, err = write_telemetry(self.paths, self.settings, checked)
+        if not ok:
+            warning(
+                self,
+                "无法保存遥测设置",
+                f"{err}\n\n请确认 home/config.json 存在且可写。",
+            )
+            revert()
+            return
+
+        # 用户在设置页明确表过态，启动时就不必再问
+        self.settings.behavior.telemetry_prompted = True
+        self.settings_store.save(self.settings)
+        self.log_bus.emit_line(
+            LogSource.APP,
+            f"Hoshimi 使用统计：{'已开启' if checked else '已关闭'}",
+            "info",
+        )
+        show_toast(self, "已开启，下次启动服务生效" if checked else "已关闭使用统计")
+        self.settings_changed.emit("behavior")
 
     def _on_auto_confirm_toggled(self, checked: bool) -> None:
         self.settings.behavior.auto_confirm_first_launch = checked
@@ -579,12 +642,7 @@ class SettingsPage(QWidget):
         home_tag = "（默认）" if s.paths.home_dir == "home" else "（自定义）"
         self.home_dir_label.setText(f"{home}  {home_tag}")
 
-        ref = resolve_runtime(self.paths, s)
-        if ref.is_custom:
-            rt_text = f"{ref.directory}  （自定义，不按版本）"
-        else:
-            rt_text = f"{runtime_root(self.paths, s)}  （按版本，当前 {ref.version}）"
-        self.runtime_dir_label.setText(rt_text)
+        self._refresh_runtime_label()
 
         self.http_spin.blockSignals(True)
         self.http_spin.setValue(s.server.http_port)
@@ -602,6 +660,8 @@ class SettingsPage(QWidget):
         self.hoshimi_log_checkbox.setChecked(s.behavior.hoshimi_log)
         self.hoshimi_log_checkbox.blockSignals(False)
 
+        self._refresh_telemetry_row()
+
         self.log_checkbox.blockSignals(True)
         self.log_checkbox.setChecked(s.behavior.log_to_file)
         self.log_checkbox.blockSignals(False)
@@ -613,7 +673,7 @@ class SettingsPage(QWidget):
         self.version_combo.clear()
 
         bin_dir = self.paths.bin_dir(self.settings)
-        versions = _scan_versions(bin_dir)
+        versions = scan_versions(bin_dir)
         current = self.settings.server.version
 
         if versions:
@@ -631,6 +691,20 @@ class SettingsPage(QWidget):
             self.version_combo.setCurrentIndex(idx)
 
         self.version_combo.blockSignals(False)
+
+    def refresh_version(self) -> None:
+        """只刷新与 hoshimi 版本相关的行（下拉框 + runtime 路径）。
+
+        切版本后调用；不要用 refresh_all()，那会覆盖用户尚未应用的端口输入。
+        """
+        self._refresh_version_combo()
+        self._refresh_runtime_label()
+
+    def _refresh_runtime_label(self) -> None:
+        ref = resolve_runtime(self.paths, self.settings)
+        self.runtime_dir_label.setText(
+            f"{runtime_root(self.paths, self.settings)}  （按版本，当前 {ref.version}）"
+        )
 
     # ---------- 游戏目录 ----------
 
@@ -702,7 +776,7 @@ class SettingsPage(QWidget):
         data = self.version_combo.currentData()
 
         if data == "":
-            versions = _scan_versions(self.paths.bin_dir(self.settings))
+            versions = scan_versions(self.paths.bin_dir(self.settings))
             if not versions:
                 return
             new_version = versions[0]
@@ -719,7 +793,7 @@ class SettingsPage(QWidget):
             LogSource.APP, f"hoshimi 版本已切换：{new_version}", "info"
         )
 
-        self._refresh_version_combo()
+        self.refresh_version()
         self.settings_changed.emit("version")
         # runtime 目录由版本派生，切版本即切目录，不再需要"版本不一致"提示
 
@@ -896,54 +970,24 @@ class SettingsPage(QWidget):
         self.settings_changed.emit("paths")
 
     def _on_change_runtime_dir(self) -> None:
-        ref = resolve_runtime(self.paths, self.settings)
+        """选择 runtime 根目录：恒按版本存放（runtimes/<版本>/runtime）。"""
         start = runtime_root(self.paths, self.settings)
+        ref = resolve_runtime(self.paths, self.settings)
         if not start.exists():
             start = ref.directory.parent if ref.directory.parent.exists() else self.base_dir
 
-        path = QFileDialog.getExistingDirectory(self, "选择 runtime 目录", str(start))
+        path = QFileDialog.getExistingDirectory(self, "选择 runtime 根目录", str(start))
         if not path:
             return
         new_path = Path(path).resolve()
 
-        choice = ask_choice(
-            self,
-            "runtime 存放方式",
-            "这个目录要怎么用？\n\n"
-            f"{new_path}\n\n"
-            "• 按版本：作为根目录，每个 hoshimi 版本各占一个子目录，切版本即切 runtime（推荐）\n"
-            "• 固定目录：所有版本共用这一个 runtime 目录，切换版本后需要重新初始化",
-            [("root", "作为根目录（按版本）"), ("custom", "作为固定的 runtime 目录")],
-            default=0,
-        )
-
-        if choice == "root":
-            self.settings.paths.runtime_root = self.paths.relativize(new_path)
-            self.settings.paths.runtime_mode = MODE_PER_VERSION
-            message = f"runtime 根目录已更换：{new_path}"
-        elif choice == "custom":
-            try:
-                non_empty = any(new_path.iterdir())
-            except OSError:
-                non_empty = False
-            if non_empty:
-                complete, missing = validate_runtime(new_path)
-                if not complete:
-                    information(
-                        self,
-                        "目录可能不是完整的 runtime",
-                        "缺少：\n"
-                        + "、".join(missing)
-                        + "\n\n如果这是新目录，请在使用前执行「初始化」。",
-                    )
-            self.settings.paths.custom_runtime_dir = self.paths.relativize(new_path)
-            self.settings.paths.runtime_mode = MODE_CUSTOM
-            message = f"runtime 目录已固定为：{new_path}"
-        else:
-            return
-
+        self.settings.paths.runtime_root = self.paths.relativize(new_path)
         self.settings_store.save(self.settings)
-        self.log_bus.emit_line(LogSource.APP, message, "info")
+        self.log_bus.emit_line(
+            LogSource.APP,
+            f"runtime 根目录已更换（按版本存放）：{new_path}",
+            "info",
+        )
         self.refresh_all()
         self.settings_changed.emit("paths")
 

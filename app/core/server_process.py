@@ -18,6 +18,7 @@ from app.core.log_bus import LogBus, LogSource
 from app.core.paths import Paths
 from app.core.runtime_layout import resolve_runtime
 from app.core.settings import Settings
+from app.core.telemetry_config import read_telemetry, write_telemetry
 
 # ---------- Windows 常量 ----------
 
@@ -45,14 +46,15 @@ class ServerProcess(QObject):
     - 启动：CREATE_NEW_CONSOLE + CREATE_NEW_PROCESS_GROUP + 隐藏控制台 + stdout 管道
     - 读取：reader 线程 → Qt Signal → 主线程 → log_bus
     - 停止：CTRL_BREAK → terminate → kill 三级
-    - 首次启动：横幅提示按设置自动回车；0.0.8+ 遥测询问转发给 UI 弹窗
+    - 首次启动：横幅提示按设置自动回车；0.0.8+ 遥测询问在启动前已写进配置文件，
+      万一仍出现则按配置当场代答（兜底，不弹窗）
     - Job Object：KILL_ON_JOB_CLOSE，Verthandi 崩溃也能带走 hoshimi
     """
 
     state_changed = Signal(str)  # ServerState.value
     waiting_for_confirm = Signal()  # 需要用户手动确认
     confirm_resolved = Signal()  # 确认完成（自动或手动）
-    telemetry_prompt = Signal()  # hoshimi 0.0.8+ 的使用统计询问
+    telemetry_fallback = Signal()  # 走到兜底代答时发出（正常情况下不会触发）
     _stdout_line = Signal(str)  # 内部：reader 线程 → 主线程
     _process_exited = Signal(int)  # 内部：monitor 线程 → 主线程
 
@@ -193,17 +195,42 @@ class ServerProcess(QObject):
     # ---------- 线程函数 ----------
 
     def _read_stdout(self, proc: subprocess.Popen) -> None:
+        """逐字符累积后切行。
+
+        不能直接 `for raw in stdout`：hoshimi 的遥测提示以 `[y/N]：` 结尾且
+        **没有换行符**，逐行迭代会一直憋在缓冲区里，等到进程退出才吐出来——
+        表现就是弹窗（或兜底代答）永不触发、服务端停在"启动中"。
+        因此这里按字符读，遇到换行，或命中遥测提示的尾巴，就立刻切成一行。
+        """
         stdout = proc.stdout
         if stdout is None:
             return
+        buf = ""
         try:
-            for raw in stdout:
-                text = raw.rstrip("\r\n")
-                if not text:
+            while True:
+                ch = stdout.read(1)
+                if not ch:
+                    break
+                if ch in "\r\n":
+                    if buf:
+                        self._stdout_line.emit(buf)
+                        buf = ""
                     continue
-                self._stdout_line.emit(text)
+                buf += ch
+                if self._should_flush(buf):
+                    self._stdout_line.emit(buf)
+                    buf = ""
         except (OSError, ValueError):
             pass
+        if buf:
+            self._stdout_line.emit(buf)
+
+    @classmethod
+    def _should_flush(cls, text: str) -> bool:
+        if len(text) > 2000:  # 兜底：没换行的超长输出也要吐出来
+            return True
+        # 遥测提示没有换行结尾，靠"锚点 + 冒号"判定这一句已经说完了
+        return cls.TELEMETRY_HINT in text and text.rstrip().endswith("：")
 
     def _monitor(self, proc: subprocess.Popen) -> None:
         rc = proc.wait()
@@ -222,29 +249,36 @@ class ServerProcess(QObject):
             self._maybe_auto_confirm()
 
     def _handle_telemetry_prompt(self) -> None:
-        """0.0.8+ 的使用统计询问。这是 hoshimi 自己的遥测功能，与 Verthandi 无关，
-        必须由用户决定；答复由 hoshimi 写入 config.json（telemetry_consent），
-        一生只问一次。若无人在超时前答复也无需处理——hoshimi 会一直等待 stdin。"""
+        """兜底：正常流程下启动前已经把答案写进 config.json，hoshimi 根本不会问。
+
+        之所以还留这一条：配置可能是只读的、被用户/别的工具重置过，或者
+        未来版本换了键名。真走到这里说明"没有答复"，那 hoshimi 会一直等
+        stdin——那就按当前配置（缺省为关闭）当场代答，绝不让它卡住。
+        """
         if self._telemetry_pending:
             return
         self._telemetry_pending = True
-        self.telemetry_prompt.emit()
 
-    def answer_telemetry(self, agree: bool) -> None:
-        """用户在弹窗中选择后调用，转发 y / 回车给 hoshimi。"""
-        self._telemetry_pending = False
+        enabled = read_telemetry(self.paths, self.settings) is True
+        if read_telemetry(self.paths, self.settings) is None:
+            ok, err = write_telemetry(self.paths, self.settings, False)
+            if not ok:
+                self.log_bus.emit_line(
+                    LogSource.APP, f"无法写入遥测答复（{err}），仅本次代答", "warning"
+                )
         if self._proc is None or self._proc.stdin is None:
             return
         try:
-            self._proc.stdin.write("y\n" if agree else "\n")
+            self._proc.stdin.write("y\n" if enabled else "n\n")
             self._proc.stdin.flush()
-            self.log_bus.emit_line(
-                LogSource.APP,
-                "已答复 Hoshimi 使用统计询问：" + ("同意" if agree else "拒绝"),
-                "info",
-            )
         except (OSError, ValueError):
-            pass
+            return
+        self.log_bus.emit_line(
+            LogSource.APP,
+            "已代答 Hoshimi 使用统计询问：" + ("同意" if enabled else "拒绝"),
+            "info",
+        )
+        self.telemetry_fallback.emit()
 
     def _maybe_auto_confirm(self) -> None:
         if not self._auto_confirm_pending:

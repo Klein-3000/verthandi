@@ -33,7 +33,7 @@ class VersionInfo:
 class RuntimeEntry:
     """runtimes/ 下的一个条目：按版本目录、临时目录，或 backup/ 里的旧备份。"""
 
-    kind: str  # runtime / staging / legacy / custom
+    kind: str  # runtime / staging / legacy
     label: str
     path: Path
     size_bytes: int
@@ -98,21 +98,6 @@ def scan_runtimes(paths: Paths, settings: Settings) -> list[RuntimeEntry]:
     ref = resolve_runtime(paths, settings)
     entries: list[RuntimeEntry] = []
 
-    if ref.is_custom:
-        complete, missing = validate_runtime(ref.directory)
-        entries.append(
-            RuntimeEntry(
-                kind="custom",
-                label=f"自定义 · {ref.directory.name}",
-                path=ref.directory,
-                size_bytes=get_dir_size(ref.directory),
-                is_current=True,
-                complete=complete,
-                detail="缺失：" + "、".join(missing[:3]) if missing else "固定目录模式",
-                deletable=False,
-            )
-        )
-
     root = runtime_root(paths, settings)
     if root.is_dir():
         for d in root.iterdir():
@@ -148,10 +133,10 @@ def scan_runtimes(paths: Paths, settings: Settings) -> list[RuntimeEntry]:
                     label=d.name,
                     path=d,
                     size_bytes=get_dir_size(d),
-                    is_current=not ref.is_custom and d.name == ref.version,
+                    is_current=d.name == ref.version,
                     complete=complete,
                     detail=" · ".join(bits),
-                    deletable=not (not ref.is_custom and d.name == ref.version),
+                    deletable=d.name != ref.version,
                 )
             )
 
