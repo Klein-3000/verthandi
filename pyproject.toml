@@ -5,6 +5,7 @@ description = "Hoshimi 服务端的桌面控制台，提供图形化启停、切
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "cryptography>=44",
     "psutil>=7.2.2",
     "pycryptodome>=4.2.0",
     "pyside6>=6.12.0",

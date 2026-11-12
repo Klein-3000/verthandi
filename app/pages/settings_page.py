@@ -3,8 +3,9 @@ from __future__ import annotations
 import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import ClassVar
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     CheckBox,
     ComboBox,
+    PrimaryPushButton,
     PushButton,
 )
 from qfluentwidgets import (
@@ -28,7 +30,7 @@ from qfluentwidgets import (
 )
 
 from app.core import cleanup_manager as cm
-from app.core import hoshimi_importer
+from app.core import hoshimi_importer, photo_cert
 from app.core.client_state import client_fingerprint
 from app.core.game_process import GameWatcher
 from app.core.hoshimi_finder import scan_versions
@@ -64,6 +66,19 @@ from app.widgets.version_input_dialog import VersionInputDialog
 _DEFAULT_PORTS = (ServerConfig().http_port, ServerConfig().game_port)
 
 
+class _PhotoJob(QThread):
+    """把「可能弹 Windows 提示」的证书操作放到后台，避免卡住界面。"""
+
+    done = Signal(object)
+
+    def __init__(self, func, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._func = func
+
+    def run(self) -> None:
+        self.done.emit(self._func())
+
+
 class SettingsPage(QWidget):
     settings_changed = Signal(
         str
@@ -96,6 +111,8 @@ class SettingsPage(QWidget):
         self._port_dirty = False
         self._http_check: PortResult | None = None
         self._game_check: PortResult | None = None
+        self._photo_job: _PhotoJob | None = None
+        self._photo_busy = False
 
         # 外层布局（无外边距，用于放置滚动区域）
         outer = QVBoxLayout(self)
@@ -127,6 +144,7 @@ class SettingsPage(QWidget):
 
         layout.addWidget(self._build_essential_card())
         layout.addWidget(self._build_port_card())
+        layout.addWidget(self._build_photo_card())
         layout.addWidget(self._build_appearance_card())
         layout.addWidget(self._build_behavior_card())
         layout.addWidget(self._build_logging_card())
@@ -292,6 +310,181 @@ class SettingsPage(QWidget):
         row.addWidget(spin)
         row.addWidget(status, 1)
         return row
+
+    # ---------- 誓约照片（HTTPS） ----------
+
+    def _build_photo_card(self) -> ExpandCard:
+        """游戏内照片 SDK 固定走 HTTPS，这张卡负责证书与配置的启停。"""
+        card = ExpandCard(FIF.CAMERA, "誓约照片（HTTPS）", "未启用")
+        self.photo_card = card
+
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(48, 4, 24, 16)
+        layout.setSpacing(8)
+
+        self.photo_state = QLabel("读取中…")
+        self.photo_state.setStyleSheet(
+            "color: #111827; background: transparent; font-weight: 600;"
+        )
+        layout.addWidget(self.photo_state)
+
+        self.photo_detail = QLabel("")
+        self.photo_detail.setObjectName("MutedText")
+        self.photo_detail.setWordWrap(True)
+        layout.addWidget(self.photo_detail)
+
+        self.photo_meta = QLabel("")
+        self.photo_meta.setStyleSheet("color: #9ca3af; background: transparent;")
+        self.photo_meta.setWordWrap(True)
+        self.photo_meta.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(self.photo_meta)
+
+        hint = QLabel(
+            "仅同一台电脑、同一 Windows 用户有效。启用会生成一张只对 127.0.0.1 "
+            "有效的自签证书并加入当前用户的根证书库，Windows 可能弹出安全提示，"
+            "请选择「是」。启用或停用后都需要重启服务。"
+        )
+        hint.setStyleSheet("color: #9ca3af; background: transparent;")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        action_row = QHBoxLayout()
+        action_row.addStretch(1)
+        self.photo_disable_btn = PushButton("停用")
+        self.photo_disable_btn.clicked.connect(self._on_photo_disable)
+        self.photo_renew_btn = PushButton("续期")
+        self.photo_renew_btn.clicked.connect(self._on_photo_renew)
+        self.photo_enable_btn = PrimaryPushButton("启用")
+        self.photo_enable_btn.clicked.connect(self._on_photo_enable)
+        for btn in (self.photo_disable_btn, self.photo_renew_btn):
+            action_row.addWidget(btn)
+        action_row.addWidget(self.photo_enable_btn)
+        layout.addLayout(action_row)
+
+        card.addGroupWidget(body)
+        return card
+
+    _PHOTO_COLORS: ClassVar[dict[str, str]] = {
+        "off": "#6b7280",
+        "ok": "#16a34a",
+        "warn": "#d97706",
+        "error": "#dc2626",
+    }
+
+    def refresh_photo(self, editable: bool | None = None) -> None:
+        """editable 为 None 时读当前服务状态；_apply_server_state 会显式传入，
+        避免"界面按新状态渲染、判断却读旧的 server_process.state"。"""
+        st = photo_cert.status(self.paths, self.settings)
+        color = self._PHOTO_COLORS.get(st.level, "#6b7280")
+        self.photo_state.setText("正在处理…" if self._photo_busy else st.title)
+        self.photo_state.setStyleSheet(
+            f"color: {color}; background: transparent; font-weight: 600;"
+        )
+        self.photo_card.card.contentLabel.setText(st.title)
+
+        detail = (
+            "正在处理，若弹出 Windows 安全提示请选择「是」，完成前请不要关闭程序。"
+            if self._photo_busy
+            else st.detail
+        )
+        self.photo_detail.setText(detail)
+
+        parts = []
+        if st.thumbprint:
+            parts.append(f"指纹 {st.thumbprint[:16]}…")
+        if st.not_after is not None:
+            parts.append("到期 " + st.not_after.astimezone().strftime("%Y-%m-%d"))
+        parts.append(f"HTTPS 端口 {st.https_port}")
+        parts.append(f"照片目录 {photo_cert.photos_dir(self.paths, self.settings)}")
+        self.photo_meta.setText("　·　".join(parts))
+
+        if editable is None:
+            editable = self.server_process.state == ServerState.STOPPED
+        running = not editable
+        if running:
+            tip = "服务运行中，请先停止服务"
+        elif self._photo_busy:
+            tip = "正在处理，请稍候"
+        else:
+            tip = ""
+        for btn, allowed in (
+            (self.photo_enable_btn, st.can_enable),
+            (self.photo_disable_btn, st.can_disable),
+            (self.photo_renew_btn, st.can_renew),
+        ):
+            btn.setVisible(allowed)
+            btn.setEnabled(allowed and editable and not self._photo_busy)
+            btn.setToolTip(tip)
+
+        # 文本行数可能变化（wordWrap 标签），展开状态下重新贴合卡片高度
+        self.photo_card.sync_height()
+
+    def _on_photo_enable(self) -> None:
+        if not question(
+            self,
+            "启用同机照片 HTTPS",
+            "将执行以下操作：\n\n"
+            "1. 生成一张只对 127.0.0.1 有效的自签证书（有效期一年）\n"
+            "2. 把证书加入「当前用户」的根证书库——Windows 可能弹出安全提示，"
+            "请选择「是」\n"
+            "3. 备份 config.json 并打开 enable_https（默认使用 443 端口）\n\n"
+            "完成后需要重启服务并重新登录游戏才算生效。",
+            yes_text="启用",
+        ):
+            return
+        self._start_photo_job(photo_cert.enable)
+
+    def _on_photo_disable(self) -> None:
+        if not question(
+            self,
+            "停用同机照片 HTTPS",
+            "将恢复启用前的 config.json、删除证书与私钥，并从当前用户的根证书库"
+            "移除这张证书的信任。\n\n"
+            "完成后需要重启服务。若配置文件在启用后被手动改过，为避免覆盖你的改动，"
+            "停用会被拒绝。",
+            yes_text="停用",
+            danger=True,
+        ):
+            return
+        self._start_photo_job(photo_cert.disable)
+
+    def _on_photo_renew(self) -> None:
+        if not question(
+            self,
+            "续期照片证书",
+            "续期会先按「停用」完整还原，再重新签发一张新证书（有效期一年，"
+            "证书指纹会变）。\n\n完成后需要重启服务并重新登录游戏。",
+            yes_text="续期",
+        ):
+            return
+        self._start_photo_job(photo_cert.renew)
+
+    def _start_photo_job(self, func) -> None:
+        """证书操作可能被 Windows 安全提示阻塞，必须放到后台线程。"""
+        if self._photo_busy:
+            return
+        self._photo_busy = True
+        self.refresh_photo()
+        job = _PhotoJob(lambda: func(self.paths, self.settings), self)
+        job.done.connect(self._on_photo_done)
+        job.finished.connect(job.deleteLater)
+        self._photo_job = job
+        job.start()
+
+    def _on_photo_done(self, result) -> None:
+        self._photo_job = None
+        self._photo_busy = False
+        self.refresh_photo()
+        if result.ok:
+            self.log_bus.emit_line(LogSource.APP, result.message, "info")
+            show_toast(self.window(), result.message, 4000, "success")
+        else:
+            self.log_bus.emit_line(
+                LogSource.APP, f"照片 HTTPS 操作失败：{result.message}", "warn"
+            )
+            warning(self, "操作未完成", result.message)
 
     # ---------- 修改角色外观 ----------
 
@@ -678,6 +871,7 @@ class SettingsPage(QWidget):
         self.log_checkbox.blockSignals(False)
 
         self._update_disk_usage()
+        self.refresh_photo()
 
     def _refresh_version_combo(self) -> None:
         self.version_combo.blockSignals(True)
@@ -704,12 +898,15 @@ class SettingsPage(QWidget):
         self.version_combo.blockSignals(False)
 
     def refresh_version(self) -> None:
-        """只刷新与 hoshimi 版本相关的行（下拉框 + runtime 路径）。
+        """只刷新与 hoshimi 版本相关的行（下拉框 + runtime 路径 + 照片卡）。
 
         切版本后调用；不要用 refresh_all()，那会覆盖用户尚未应用的端口输入。
         """
         self._refresh_version_combo()
         self._refresh_runtime_label()
+        # 照片卡是否支持取决于版本，切版本要立刻重判，
+        # 否则低版本下卡片仍显示可交互，直到切走再切回来才刷新
+        self.refresh_photo()
 
     def _refresh_runtime_label(self) -> None:
         ref = resolve_runtime(self.paths, self.settings)
@@ -1163,6 +1360,9 @@ class SettingsPage(QWidget):
         # 行为/日志开关不受服务状态影响
         self.auto_confirm_checkbox.setEnabled(True)
         self.log_checkbox.setEnabled(True)
+
+        # 照片卡的可点击状态跟着服务状态走
+        self.refresh_photo(editable)
 
     @staticmethod
     def _repolish(widget: QWidget) -> None:
