@@ -63,7 +63,9 @@ class PrepareProcess(QObject):
         cmd = [
             str(exe),
             "prepare",
-            *hoshimi_log_args(self.paths, self.settings, exe, exe.parent.name, self.log_bus),
+            *hoshimi_log_args(
+                self.paths, self.settings, exe, exe.parent.name, self.log_bus
+            ),
             "--client-dir",
             str(client_dir),
             "--home",

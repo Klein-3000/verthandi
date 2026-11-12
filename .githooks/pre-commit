@@ -1,0 +1,66 @@
+#!/bin/sh
+# 提交前检查：暂存区里的 .py 必须通过 ruff check，且必须已经 ruff format。
+#
+# 启用方式（克隆后执行一次）：
+#   git config core.hooksPath .githooks
+#
+# 只检查本次提交涉及的文件，避免历史遗留问题挡住无关提交。
+
+set -u
+
+# ---------- 定位 ruff ----------
+# 优先项目虚拟环境（uv add --dev ruff 装的那份），保证版本与 pyproject 一致
+if [ -n "${RUFF_BIN:-}" ]; then
+    RUFF="$RUFF_BIN"
+    ruff_cmd() { "$RUFF" "$@"; }
+elif [ -x ".venv/Scripts/ruff.exe" ]; then
+    RUFF=".venv/Scripts/ruff.exe"
+    ruff_cmd() { "$RUFF" "$@"; }
+elif [ -x ".venv/bin/ruff" ]; then
+    RUFF=".venv/bin/ruff"
+    ruff_cmd() { "$RUFF" "$@"; }
+elif command -v uv >/dev/null 2>&1; then
+    ruff_cmd() { uv run --quiet ruff "$@"; }
+elif command -v ruff >/dev/null 2>&1; then
+    ruff_cmd() { ruff "$@"; }
+else
+    echo "❌ 找不到 ruff，无法执行提交前检查。" >&2
+    echo "   请先执行：uv sync（或 uv add --dev ruff）" >&2
+    echo "   临时跳过检查：git commit --no-verify" >&2
+    exit 1
+fi
+
+# ---------- 收集暂存的 .py ----------
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$' >"$tmp" || true
+
+set --
+while IFS= read -r f; do
+    [ -f "$f" ] && set -- "$@" "$f"
+done <"$tmp"
+
+if [ $# -eq 0 ]; then
+    exit 0
+fi
+
+echo "🔍 ruff check（$# 个文件）"
+if ! ruff_cmd check --force-exclude "$@"; then
+    echo "" >&2
+    echo "❌ ruff check 未通过，提交已中止。" >&2
+    echo "   自动修复可修项：uv run ruff check --fix ." >&2
+    echo "   其余需手工处理，改完重新 git add。" >&2
+    exit 1
+fi
+
+echo "🎨 ruff format --check"
+if ! ruff_cmd format --check --force-exclude "$@"; then
+    echo "" >&2
+    echo "❌ 代码未按 ruff format 格式化，提交已中止。" >&2
+    echo "   执行：uv run ruff format ." >&2
+    echo "   然后重新 git add 再提交。" >&2
+    exit 1
+fi
+
+echo "✅ ruff 检查通过"
+exit 0

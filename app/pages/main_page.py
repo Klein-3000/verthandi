@@ -42,7 +42,6 @@ from app.core.telemetry_config import (
     write_telemetry,
 )
 from app.widgets.fluent_message import (
-    MessageDialog,
     critical,
     information,
     question,
@@ -324,7 +323,9 @@ class MainPage(QWidget):
         try:
             self.version_combo.clear()
             if versions:
-                self.version_combo.addItem(f"自动选择最新（{versions[0]}）", userData="")
+                self.version_combo.addItem(
+                    f"自动选择最新（{versions[0]}）", userData=""
+                )
             for v in versions:
                 self.version_combo.addItem(v, userData=v)
             if current and current not in versions:
@@ -333,7 +334,9 @@ class MainPage(QWidget):
                 self.version_combo.addItem("未找到 hoshimi", userData=None)
 
             idx = self.version_combo.findData(current) if current else 0
-            self.version_combo.setCurrentIndex(max(min(idx, self.version_combo.count() - 1), 0))
+            self.version_combo.setCurrentIndex(
+                max(min(idx, self.version_combo.count() - 1), 0)
+            )
         finally:
             self.version_combo.blockSignals(False)
 
@@ -525,7 +528,9 @@ class MainPage(QWidget):
             return False
         exe = Path(path)
         if exe.name.lower() != "aethergazer.exe":
-            critical(self, "文件不匹配", f"选中的文件不是 AetherGazer.exe：\n{exe.name}")
+            critical(
+                self, "文件不匹配", f"选中的文件不是 AetherGazer.exe：\n{exe.name}"
+            )
             return False
 
         entry = self.settings.active_client() or ClientEntry(
@@ -851,9 +856,7 @@ class MainPage(QWidget):
             return
 
         if self.game_watcher.running:
-            warning(
-                self, "无法切换", "游戏正在运行，请先退出客户端再切换。"
-            )
+            warning(self, "无法切换", "游戏正在运行，请先退出客户端再切换。")
             return
 
         op = self._build_switch_op()

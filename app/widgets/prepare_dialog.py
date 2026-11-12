@@ -4,11 +4,10 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
-    QVBoxLayout,
 )
+from qfluentwidgets import MessageBoxBase
 
 from app.core.prepare_process import PrepareProcess
-from qfluentwidgets import MessageBoxBase
 
 
 class PrepareDialog(MessageBoxBase):

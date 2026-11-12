@@ -134,7 +134,9 @@ class ServerProcess(QObject):
         cmd = [
             str(exe),
             "serve",
-            *hoshimi_log_args(self.paths, self.settings, exe, exe.parent.name, self.log_bus),
+            *hoshimi_log_args(
+                self.paths, self.settings, exe, exe.parent.name, self.log_bus
+            ),
             "--home",
             str(home),
             "--runtime-dir",

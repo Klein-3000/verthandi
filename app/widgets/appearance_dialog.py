@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QVBoxLayout,
-    QWidget,
 )
 from qfluentwidgets import Flyout, FlyoutAnimationType, MessageBoxBase
 
@@ -252,16 +251,15 @@ class AppearanceDialog(MessageBoxBase):
             warning(self, "保存失败", err_msg)
 
     def closeEvent(self, event):
-        if self._current_selection != self._original_state:
-            if not question(
-                self,
-                "未保存的更改",
-                "你有未保存的外观修改，确定要放弃修改并关闭吗？",
-                yes_text="放弃修改",
-                danger=True,
-            ):
-                event.ignore()
-                return
+        if self._current_selection != self._original_state and not question(
+            self,
+            "未保存的更改",
+            "你有未保存的外观修改，确定要放弃修改并关闭吗？",
+            yes_text="放弃修改",
+            danger=True,
+        ):
+            event.ignore()
+            return
         super().closeEvent(event)
 
     def _show_help(self):

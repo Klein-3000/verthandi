@@ -124,7 +124,9 @@ def question(
     danger: bool = False,
 ) -> bool:
     """二选一确认。返回 True 表示用户点了 yes 按钮。"""
-    return _exec(parent, title, text, yes_text=yes_text, cancel_text=no_text, danger=danger)
+    return _exec(
+        parent, title, text, yes_text=yes_text, cancel_text=no_text, danger=danger
+    )
 
 
 # 语义别名：危险操作确认（默认焦点在“取消”，防误触回车）
@@ -166,7 +168,9 @@ def ask_choice(
         return _on_click
 
     for i, (key, label) in enumerate(choices):
-        btn: PushButton = PrimaryPushButton(label) if i == default else PushButton(label)
+        btn: PushButton = (
+            PrimaryPushButton(label) if i == default else PushButton(label)
+        )
         btn.setMinimumWidth(100)
         btn.clicked.connect(_make(key))
         box.buttonLayout.addWidget(btn, 1, Qt.AlignVCenter)

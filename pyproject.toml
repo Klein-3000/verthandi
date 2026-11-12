@@ -21,3 +21,8 @@ ignore = [
     "BLE001",           # 忽略 `except Exception:`（GUI 应用必须用大网兜底，防止程序闪退）
     "S110", "S112",     # 忽略 `try-except-pass` 或 `continue`（常见于探测和清理逻辑）
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.4",
+]

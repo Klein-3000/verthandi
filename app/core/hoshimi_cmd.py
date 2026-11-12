@@ -32,8 +32,10 @@ UNKNOWN_VERSION = "unknown"
 
 def hoshimi_log_dir(paths: Paths, settings: Settings, version: str) -> Path:
     """hoshimi 服务日志目录：logs/hoshimi/<version>/，与 runtimes/ 同构。"""
-    return paths.resolve(settings.paths.logs_dir) / "hoshimi" / (
-        version or UNKNOWN_VERSION
+    return (
+        paths.resolve(settings.paths.logs_dir)
+        / "hoshimi"
+        / (version or UNKNOWN_VERSION)
     )
 
 
@@ -80,9 +82,7 @@ def _cache_put(paths: Paths, exe: Path, supported: bool) -> None:
     }
     tmp = _cache_path(paths).with_name(CAP_CACHE_NAME + ".tmp")
     try:
-        tmp.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(_cache_path(paths))
     except OSError:
         pass

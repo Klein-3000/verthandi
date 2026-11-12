@@ -347,7 +347,9 @@ def migrate_legacy(paths: Paths, settings: Settings) -> MigrationResult:
     manifest = PrepareManifest(
         version=version,
         prepared_at=_mtime_iso(target),
-        client_dir=str(settings.active_client().exe_path) if settings.active_client() else "",
+        client_dir=str(settings.active_client().exe_path)
+        if settings.active_client()
+        else "",
         client_fingerprint=_as_str(settings.legacy_prepare.get("clientFingerprint")),
         hoshimi_exe=str(find_hoshimi_exe(paths, settings)[0]),
         complete=complete,
@@ -398,6 +400,8 @@ def _legacy_version(paths: Paths, settings: Settings) -> str:
 
 def _mtime_iso(path: Path) -> str:
     try:
-        return datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds")
+        return datetime.fromtimestamp(path.stat().st_mtime).isoformat(
+            timespec="seconds"
+        )
     except OSError:
         return datetime.now().isoformat(timespec="seconds")

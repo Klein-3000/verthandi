@@ -146,6 +146,12 @@ uv pip install pyinstaller
 # 进行编译
 uv run pyinstaller Verthandi.spec
 ```
+
+4. 启用提交前检查（只需执行一次）：
+```bash
+git config core.hooksPath .githooks
+```
+之后每次 `git commit` 都会对暂存区里的 `.py` 执行 `ruff check` 与 `ruff format --check`，任一不通过即中止提交。手动检查用 `uv run ruff check .` 与 `uv run ruff format --check .`，格式化用 `uv run ruff format .`。
 ---
 
 ## 🙏 致谢与许可

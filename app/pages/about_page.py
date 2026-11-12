@@ -16,7 +16,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import FluentIcon as FIF, HyperlinkButton
+from qfluentwidgets import FluentIcon as FIF
+from qfluentwidgets import HyperlinkButton
 
 from app import __version__
 from app.core.hoshimi_finder import find_hoshimi_exe
@@ -147,9 +148,7 @@ class AboutPage(QWidget):
     # ---------- 运行环境 ----------
 
     def _build_environment(self) -> ExpandCard:
-        card = ExpandCard(
-            FIF.CODE, "运行环境", "Python / PySide6 / 运行模式与目录信息"
-        )
+        card = ExpandCard(FIF.CODE, "运行环境", "Python / PySide6 / 运行模式与目录信息")
 
         body = QWidget()
         body.setStyleSheet("background: transparent;")
@@ -331,4 +330,3 @@ class AboutPage(QWidget):
     def _on_copy_version(self) -> None:
         QApplication.clipboard().setText(__version__)
         show_toast(self, f"已复制版本号：{__version__}")
-

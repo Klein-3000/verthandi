@@ -86,15 +86,26 @@ class TelemetryDialog(MessageBoxBase):
             self.remember_checkbox.setChecked(True)
             self.viewLayout.addWidget(self.remember_checkbox)
 
-        self.yesButton.setText("允许发送")
-        self.cancelButton.setText("保持关闭（推荐）")
-        # 默认拒绝：焦点与回车都落在「保持关闭」
-        self.yesButton.clearFocus()
-        self.cancelButton.setFocus()
-        self.cancelButton.setDefault(True)
+        # MessageBoxBase 固定把 yesButton（PrimaryPushButton，蓝色）放在左边、
+        # cancelButton（白色）放在右边。蓝色最抢眼，所以左边的蓝色按钮必须是
+        # 「保持关闭」——默认选择不该用鲜艳的颜色诱导用户开启遥测。
+        self.yesButton.setText("保持关闭（推荐）")
+        self.cancelButton.setText("允许发送")
+        # 默认拒绝：焦点与回车都落在蓝色「保持关闭」上
+        self.cancelButton.clearFocus()
+        self.yesButton.setFocus()
+        self.yesButton.setDefault(True)
+
+        # 「允许发送」在白色按钮上，点击走的是 reject()。用标记区分"点了允许"
+        # 和"Esc / 关闭窗口"——后者必须等同于「保持关闭」，绝不能留下"没答复"。
+        self._allow = False
+        self.cancelButton.clicked.connect(self._on_allow)
 
         self.widget.setMinimumWidth(480)
         self.widget.setMaximumWidth(620)
+
+    def _on_allow(self) -> None:
+        self._allow = True
 
     def remember(self) -> bool:
         return self.remember_checkbox is None or self.remember_checkbox.isChecked()
@@ -105,14 +116,15 @@ def ask_telemetry_consent(
 ) -> tuple[bool, bool]:
     """转达询问，返回 (是否允许, 是否记住)。
 
-    关闭窗口等同于「保持关闭」——绝不能留下"没答复"，否则 hoshimi 会阻塞。
+    关闭窗口 / Esc 等同于「保持关闭」——绝不能留下"没答复"，否则 hoshimi 会阻塞。
     """
     dialog = TelemetryDialog(parent, version, current)
-    accepted = dialog.exec() == 1  # QDialog.Accepted
-    return accepted, dialog.remember()
+    dialog.exec()
+    return dialog._allow, dialog.remember()
 
 
 def confirm_enable_telemetry(parent: QWidget | None, version: str = "") -> bool:
     """设置页打开开关前的二次确认（涉及 HWID 哈希，值得停一下）。"""
     dialog = TelemetryDialog(parent, version, confirm_only=True)
-    return dialog.exec() == 1
+    dialog.exec()
+    return dialog._allow

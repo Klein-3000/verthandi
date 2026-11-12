@@ -21,8 +21,10 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     CheckBox,
     ComboBox,
-    FluentIcon as FIF,
     PushButton,
+)
+from qfluentwidgets import (
+    FluentIcon as FIF,
 )
 
 from app.core import cleanup_manager as cm
@@ -39,7 +41,7 @@ from app.core.runtime_layout import (
     runtime_root,
 )
 from app.core.server_process import ServerProcess, ServerState
-from app.core.settings import ClientEntry, Settings, SettingsStore
+from app.core.settings import ClientEntry, ServerConfig, Settings, SettingsStore
 from app.core.telemetry_config import (
     read_telemetry,
     supports_telemetry,
@@ -57,6 +59,9 @@ from app.widgets.fluent_message import (
 from app.widgets.telemetry_dialog import confirm_enable_telemetry
 from app.widgets.toast import show_toast
 from app.widgets.version_input_dialog import VersionInputDialog
+
+# 出厂端口，端口卡的标签文案从这里取，避免和 Settings 的默认值两处不一致
+_DEFAULT_PORTS = (ServerConfig().http_port, ServerConfig().game_port)
 
 
 class SettingsPage(QWidget):
@@ -219,9 +224,7 @@ class SettingsPage(QWidget):
 
     def _build_port_card(self) -> ExpandCard:
         """端口（高级设置）：独立的可展开卡片（Fluent 风格）。"""
-        card = ExpandCard(
-            FIF.GLOBE, "端口（高级设置）", "修改服务端口，通常无需改动"
-        )
+        card = ExpandCard(FIF.GLOBE, "端口（高级设置）", "修改服务端口，通常无需改动")
 
         body = QWidget()
         body.setStyleSheet("background: transparent;")
@@ -238,7 +241,11 @@ class SettingsPage(QWidget):
         self.http_status = QLabel("")
         self.http_status.setStyleSheet("color: #9ca3af; background: transparent;")
         layout.addLayout(
-            self._port_row("HTTP 端口", self.http_spin, self.http_status)
+            self._port_row(
+                f"HTTP 端口（默认 {_DEFAULT_PORTS[0]}）",
+                self.http_spin,
+                self.http_status,
+            )
         )
 
         self.game_spin = QSpinBox()
@@ -250,7 +257,11 @@ class SettingsPage(QWidget):
         self.game_status = QLabel("")
         self.game_status.setStyleSheet("color: #9ca3af; background: transparent;")
         layout.addLayout(
-            self._port_row("游戏端口", self.game_spin, self.game_status)
+            self._port_row(
+                f"游戏端口（默认 {_DEFAULT_PORTS[1]}）",
+                self.game_spin,
+                self.game_status,
+            )
         )
 
         hint = QLabel(
@@ -276,7 +287,7 @@ class SettingsPage(QWidget):
         key = QLabel(label)
         # 展开卡自带样式会把 QLabel 刷成黑色，这里内联指定灰色
         key.setStyleSheet("color: #6b7280; background: transparent;")
-        key.setFixedWidth(110)
+        key.setFixedWidth(195)
         row.addWidget(key)
         row.addWidget(spin)
         row.addWidget(status, 1)
@@ -974,7 +985,9 @@ class SettingsPage(QWidget):
         start = runtime_root(self.paths, self.settings)
         ref = resolve_runtime(self.paths, self.settings)
         if not start.exists():
-            start = ref.directory.parent if ref.directory.parent.exists() else self.base_dir
+            start = (
+                ref.directory.parent if ref.directory.parent.exists() else self.base_dir
+            )
 
         path = QFileDialog.getExistingDirectory(self, "选择 runtime 根目录", str(start))
         if not path:

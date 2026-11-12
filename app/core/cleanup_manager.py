@@ -157,7 +157,9 @@ def scan_runtimes(paths: Paths, settings: Settings) -> list[RuntimeEntry]:
                 )
             )
 
-    entries.sort(key=lambda e: (e.is_current, e.kind == "legacy", e.label), reverse=True)
+    entries.sort(
+        key=lambda e: (e.is_current, e.kind == "legacy", e.label), reverse=True
+    )
     return entries
 
 
