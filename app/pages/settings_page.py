@@ -30,8 +30,8 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
+from app.core import battle_controls, hoshimi_importer, photo_cert
 from app.core import cleanup_manager as cm
-from app.core import hoshimi_importer, photo_cert
 from app.core.client_state import client_fingerprint
 from app.core.game_process import GameWatcher
 from app.core.hoshimi_finder import scan_versions
@@ -50,6 +50,7 @@ from app.core.telemetry_config import (
     supports_telemetry,
     write_telemetry,
 )
+from app.widgets.battle_backup_dialog import BattleBackupDialog
 from app.widgets.cleanup_dialog import CleanupDialog
 from app.widgets.expand_card import ExpandCard
 from app.widgets.fluent_message import (
@@ -68,7 +69,7 @@ from app.widgets.version_input_dialog import VersionInputDialog
 _DEFAULT_PORTS = (ServerConfig().http_port, ServerConfig().game_port)
 
 
-class _PhotoJob(QThread):
+class _BackgroundJob(QThread):
     """把「可能弹 Windows 提示」的证书操作放到后台，避免卡住界面。"""
 
     done = Signal(object)
@@ -113,8 +114,9 @@ class SettingsPage(QWidget):
         self._port_dirty = False
         self._http_check: PortResult | None = None
         self._game_check: PortResult | None = None
-        self._photo_job: _PhotoJob | None = None
+        self._photo_job: _BackgroundJob | None = None
         self._photo_busy = False
+        self._battle_job: _BackgroundJob | None = None
 
         # 外层布局（无外边距，用于放置滚动区域）
         outer = QVBoxLayout(self)
@@ -147,6 +149,7 @@ class SettingsPage(QWidget):
         layout.addWidget(self._build_essential_card())
         layout.addWidget(self._build_port_card())
         layout.addWidget(self._build_photo_card())
+        layout.addWidget(self._build_battle_card())
         layout.addWidget(self._build_appearance_card())
         layout.addWidget(self._build_behavior_card())
         layout.addWidget(self._build_logging_card())
@@ -584,7 +587,7 @@ class SettingsPage(QWidget):
             return
         self._photo_busy = True
         self.refresh_photo()
-        job = _PhotoJob(lambda: func(self.paths, self.settings), self)
+        job = _BackgroundJob(lambda: func(self.paths, self.settings), self)
         job.done.connect(self._on_photo_done)
         job.finished.connect(job.deleteLater)
         self._photo_job = job
@@ -600,6 +603,145 @@ class SettingsPage(QWidget):
         else:
             self.log_bus.emit_line(
                 LogSource.APP, f"照片 HTTPS 操作失败：{result.message}", "warn"
+            )
+            warning(self, "操作未完成", result.message)
+
+    # ---------- 战斗操控修复 ----------
+
+    def _build_battle_card(self) -> QFrame:
+        """战斗布局异常 / 键鼠模式丢失时的一键修复，对齐官方 repair 脚本。"""
+        card = QFrame()
+        card.setObjectName("Card")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(16, 16, 16, 16)
+        box.setSpacing(8)
+
+        title = QLabel("战斗操控")
+        title.setObjectName("CardTitle")
+        box.addWidget(title)
+
+        self.battle_status = QLabel("读取中…")
+        self.battle_status.setObjectName("MutedText")
+        self.battle_status.setWordWrap(True)
+        box.addWidget(self.battle_status)
+
+        hint = QLabel(
+            "战斗布局异常或键鼠模式丢失时，一键恢复 PC 内置布局；"
+            "修复前自动备份当前设置，可随时还原。"
+        )
+        hint.setObjectName("MutedText")
+        hint.setWordWrap(True)
+        box.addWidget(hint)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.battle_restore_btn = PushButton("还原备份")
+        self.battle_restore_btn.clicked.connect(self._on_battle_restore)
+        row.addWidget(self.battle_restore_btn)
+        self.battle_repair_btn = PrimaryPushButton("修复布局")
+        self.battle_repair_btn.clicked.connect(self._on_battle_repair)
+        row.addWidget(self.battle_repair_btn)
+        box.addLayout(row)
+
+        self.refresh_battle()
+        return card
+
+    def refresh_battle(self) -> None:
+        """注册表状态 + 游戏运行状态都会影响这张卡的展示。"""
+        st = battle_controls.status(self.paths, self.settings)
+        if st.error:
+            self.battle_status.setText(st.error)
+        else:
+            if st.layout_type == "":
+                layout_text = "内置布局"
+            elif st.layout_type is None:
+                layout_text = "未设置"
+            else:
+                layout_text = f"自定义（{st.layout_type}）"
+            if st.keyboard is None:
+                keyboard_text = "未设置"
+            elif st.keyboard == battle_controls.KEYBOARD_MOUSE:
+                keyboard_text = "键鼠（5）"
+            else:
+                keyboard_text = f"值 {st.keyboard}"
+            self.battle_status.setText(
+                f"战斗布局：{layout_text}　·　键鼠模式：{keyboard_text}"
+            )
+
+        running = self.game_watcher.running
+        tooltip = "请先退出游戏" if running else ""
+        self.battle_repair_btn.setEnabled(not running and not st.error)
+        self.battle_repair_btn.setToolTip(tooltip)
+        self.battle_restore_btn.setEnabled(
+            not running
+            and bool(battle_controls.list_backups(self.paths, self.settings))
+        )
+        self.battle_restore_btn.setToolTip(tooltip)
+
+    def _on_battle_repair(self) -> None:
+        if not question(
+            self,
+            "修复战斗布局",
+            "将把战斗布局重置为 PC 内置布局并启用键鼠模式（值 5），"
+            "其余用户设置保持不变。\n\n修复前会自动备份当前设置到 "
+            "data/client-settings/，之后可随时还原。请确认已退出游戏。",
+            yes_text="修复",
+        ):
+            return
+        self._start_battle_job(
+            lambda: battle_controls.repair(
+                self.paths, self.settings, game_running=self.game_watcher.running
+            )
+        )
+
+    def _on_battle_restore(self) -> None:
+        backups = battle_controls.list_backups(self.paths, self.settings)
+        if not backups:
+            show_toast(self.window(), "还没有修复备份。", 3000, "warning")
+            return
+        dlg = BattleBackupDialog(backups, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        backup_file = dlg.selected()
+        if backup_file is None:
+            return
+        if not question(
+            self,
+            "还原战斗布局",
+            f"将从备份 {backup_file.name} 恢复战斗布局与控制模式，"
+            "当前值会被覆盖（不产生新备份）。\n\n请确认已退出游戏。",
+            yes_text="还原",
+        ):
+            return
+        self._start_battle_job(
+            lambda: battle_controls.restore(
+                self.paths,
+                self.settings,
+                backup_file,
+                game_running=self.game_watcher.running,
+            )
+        )
+
+    def _start_battle_job(self, func) -> None:
+        if getattr(self, "_battle_job", None) is not None:
+            return
+        self.battle_repair_btn.setEnabled(False)
+        self.battle_restore_btn.setEnabled(False)
+        job = _BackgroundJob(func, self)
+        job.done.connect(self._on_battle_done)
+        job.finished.connect(job.deleteLater)
+        self._battle_job = job
+        job.start()
+
+    def _on_battle_done(self, result) -> None:
+        self._battle_job = None
+        self.refresh_battle()
+        if result.ok:
+            self.log_bus.emit_line(LogSource.APP, result.message, "info")
+            show_toast(self.window(), result.message, 4000, "success")
+        else:
+            self.log_bus.emit_line(
+                LogSource.APP, f"战斗操控操作失败：{result.message}", "warn"
             )
             warning(self, "操作未完成", result.message)
 
@@ -643,6 +785,8 @@ class SettingsPage(QWidget):
 
     def _on_game_running_changed(self, running: bool) -> None:
         self._apply_appearance_btn_state(running)
+        # 战斗操控的修复/还原要求退出游戏
+        self.refresh_battle()
 
     def _apply_appearance_btn_state(self, running: bool) -> None:
         if running:
@@ -989,6 +1133,7 @@ class SettingsPage(QWidget):
 
         self._update_disk_usage()
         self.refresh_photo()
+        self.refresh_battle()
 
     def _refresh_version_combo(self) -> None:
         self.version_combo.blockSignals(True)
