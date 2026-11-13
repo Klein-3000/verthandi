@@ -17,6 +17,7 @@ from app.core.paths import Paths
 from app.core.server_process import ServerProcess, ServerState
 from app.core.settings import Settings, SettingsStore
 from app.pages.about_page import AboutPage
+from app.pages.experimental_page import ExperimentalPage
 from app.pages.main_page import MainPage
 from app.pages.settings_page import SettingsPage
 from app.widgets.sidebar import Sidebar
@@ -81,9 +82,20 @@ class MainWindow(QMainWindow):
             server_process,
             game_watcher,
         )
+        self.experimental_page = ExperimentalPage(
+            base_dir,
+            paths,
+            settings,
+            server_process,
+        )
         self.about_page = AboutPage(base_dir, paths, settings)
 
-        for page in (self.main_page, self.settings_page, self.about_page):
+        for page in (
+            self.main_page,
+            self.settings_page,
+            self.experimental_page,
+            self.about_page,
+        ):
             self.stack.addWidget(page)
 
         root.addWidget(self.sidebar)
@@ -103,6 +115,8 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(index)
         if self.stack.widget(index) is self.settings_page:
             self.settings_page.refresh_all()
+        elif self.stack.widget(index) is self.experimental_page:
+            self.experimental_page.refresh()
 
     def _on_settings_changed(self, category: str) -> None:
         self.main_page.refresh_status()

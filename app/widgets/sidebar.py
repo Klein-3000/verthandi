@@ -18,6 +18,7 @@ _TIP_EXPANDED = "折叠导航栏"
 _NAV_ITEMS: tuple[tuple[str, FluentIcon, str, NavigationItemPosition], ...] = (
     ("main", FluentIcon.HOME, "主页面", NavigationItemPosition.TOP),
     ("settings", FluentIcon.SETTING, "设置", NavigationItemPosition.TOP),
+    ("lab", FluentIcon.DEVELOPER_TOOLS, "实验性", NavigationItemPosition.TOP),
     ("about", FluentIcon.INFO, "关于", NavigationItemPosition.BOTTOM),
 )
 
