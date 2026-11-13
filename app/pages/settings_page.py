@@ -24,6 +24,7 @@ from qfluentwidgets import (
     ComboBox,
     PrimaryPushButton,
     PushButton,
+    ToolButton,
 )
 from qfluentwidgets import (
     FluentIcon as FIF,
@@ -58,6 +59,7 @@ from app.widgets.fluent_message import (
     question,
     warning,
 )
+from app.widgets.photo_gallery_dialog import PhotoGalleryDialog, open_in_explorer
 from app.widgets.telemetry_dialog import confirm_enable_telemetry
 from app.widgets.toast import show_toast
 from app.widgets.version_input_dialog import VersionInputDialog
@@ -335,11 +337,54 @@ class SettingsPage(QWidget):
         self.photo_detail.setWordWrap(True)
         layout.addWidget(self.photo_detail)
 
-        self.photo_meta = QLabel("")
-        self.photo_meta.setStyleSheet("color: #9ca3af; background: transparent;")
-        self.photo_meta.setWordWrap(True)
-        self.photo_meta.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        layout.addWidget(self.photo_meta)
+        # 信息区：一行一项，避免全挤在一行里
+        self.photo_info = QWidget()
+        self.photo_info.setStyleSheet("background: transparent;")
+        info_layout = QVBoxLayout(self.photo_info)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(4)
+
+        def value_label() -> QLabel:
+            label = QLabel("—")
+            label.setStyleSheet("color: #374151; background: transparent;")
+            label.setWordWrap(True)
+            label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            return label
+
+        def info_row(title_text: str, value: QLabel, tool: ToolButton | None = None):
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            title = QLabel(title_text)
+            title.setStyleSheet("color: #9ca3af; background: transparent;")
+            title.setFixedWidth(104)
+            row.addWidget(title)
+            row.addWidget(value, 1)
+            if tool is not None:
+                row.addWidget(tool)
+            info_layout.addLayout(row)
+
+        self.photo_val_cn = value_label()
+        info_row("证书名", self.photo_val_cn)
+
+        self.photo_val_fp = value_label()
+        copy_fp_btn = ToolButton(FIF.COPY)
+        copy_fp_btn.setToolTip("复制指纹")
+        copy_fp_btn.clicked.connect(self._copy_photo_fingerprint)
+        info_row("指纹（SHA1）", self.photo_val_fp, copy_fp_btn)
+
+        self.photo_val_expire = value_label()
+        info_row("到期时间", self.photo_val_expire)
+
+        self.photo_val_port = value_label()
+        info_row("HTTPS 端口", self.photo_val_port)
+
+        self.photo_val_dir = value_label()
+        open_dir_btn = ToolButton(FIF.FOLDER)
+        open_dir_btn.setToolTip("打开照片目录")
+        open_dir_btn.clicked.connect(self._open_photo_dir)
+        info_row("相片目录", self.photo_val_dir, open_dir_btn)
+
+        layout.addWidget(self.photo_info)
 
         hint = QLabel(
             "仅同一台电脑、同一 Windows 用户有效。启用会生成一张只对 127.0.0.1 "
@@ -352,6 +397,12 @@ class SettingsPage(QWidget):
 
         action_row = QHBoxLayout()
         action_row.addStretch(1)
+        self.photo_view_btn = PushButton(FIF.PHOTO, "查看照片")
+        self.photo_view_btn.clicked.connect(self._on_photo_view)
+        action_row.addWidget(self.photo_view_btn)
+        self.photo_adopt_btn = PushButton("接管")
+        self.photo_adopt_btn.clicked.connect(self._on_photo_adopt)
+        action_row.addWidget(self.photo_adopt_btn)
         self.photo_disable_btn = PushButton("停用")
         self.photo_disable_btn.clicked.connect(self._on_photo_disable)
         self.photo_renew_btn = PushButton("续期")
@@ -391,14 +442,30 @@ class SettingsPage(QWidget):
         )
         self.photo_detail.setText(detail)
 
-        parts = []
-        if st.thumbprint:
-            parts.append(f"指纹 {st.thumbprint[:16]}…")
+        # 信息区：只在有证书信息时展示
+        has_info = bool(st.thumbprint) or st.not_after is not None
+        self.photo_info.setVisible(has_info)
+        self.photo_val_cn.setText(st.subject_cn or "—")
+        self.photo_val_fp.setText(st.thumbprint or "—")
         if st.not_after is not None:
-            parts.append("到期 " + st.not_after.astimezone().strftime("%Y-%m-%d"))
-        parts.append(f"HTTPS 端口 {st.https_port}")
-        parts.append(f"照片目录 {photo_cert.photos_dir(self.paths, self.settings)}")
-        self.photo_meta.setText("　·　".join(parts))
+            expire = st.not_after.astimezone().strftime("%Y-%m-%d")
+            if st.days_left is not None and st.days_left < 0:
+                expire += f"（已过期 {abs(st.days_left)} 天）"
+            elif st.days_left is not None:
+                expire += f"（剩余 {st.days_left} 天）"
+            self.photo_val_expire.setText(expire)
+        else:
+            self.photo_val_expire.setText("—")
+        self.photo_val_port.setText(str(st.https_port))
+        self.photo_val_dir.setText(
+            str(photo_cert.photos_dir(self.paths, self.settings))
+        )
+
+        # 照片查看入口：目录里有图就给，不要求 HTTPS 处于启用状态
+        photos = photo_cert.list_photos(self.paths, self.settings)
+        self.photo_view_btn.setVisible(bool(photos))
+        self.photo_view_btn.setEnabled(True)
+        self.photo_view_btn.setToolTip(f"共 {len(photos)} 张，点击查看")
 
         if editable is None:
             editable = self.server_process.state == ServerState.STOPPED
@@ -411,6 +478,7 @@ class SettingsPage(QWidget):
             tip = ""
         for btn, allowed in (
             (self.photo_enable_btn, st.can_enable),
+            (self.photo_adopt_btn, st.can_adopt),
             (self.photo_disable_btn, st.can_disable),
             (self.photo_renew_btn, st.can_renew),
         ):
@@ -420,6 +488,55 @@ class SettingsPage(QWidget):
 
         # 文本行数可能变化（wordWrap 标签），展开状态下重新贴合卡片高度
         self.photo_card.sync_height()
+
+    def _copy_photo_fingerprint(self) -> None:
+        fp = self.photo_val_fp.text()
+        if fp and fp != "—":
+            QApplication.clipboard().setText(fp)
+            show_toast(self.window(), "证书指纹已复制", 2000, "success")
+
+    def _open_photo_dir(self) -> None:
+        photo_dir = photo_cert.photos_dir(self.paths, self.settings)
+        if not photo_dir.is_dir():
+            show_toast(
+                self.window(),
+                "照片目录还不存在：先在游戏里完成一次「誓约拍照」，"
+                "上传第一张照片后会自动创建。",
+                4000,
+                "warning",
+            )
+            return
+        if not photo_cert.list_photos(self.paths, self.settings):
+            show_toast(self.window(), "照片目录是空的。", 3000, "warning")
+            return
+        open_in_explorer(photo_dir)
+
+    def _on_photo_view(self) -> None:
+        dlg = PhotoGalleryDialog(
+            lambda: photo_cert.list_photos(self.paths, self.settings),
+            photo_cert.photos_dir(self.paths, self.settings),
+            self,
+        )
+        dlg.exec()
+
+    def _on_photo_adopt(self) -> None:
+        choice = ask_choice(
+            self,
+            "接管现有证书",
+            "将以现有 cert.pem / key.pem 为准纳入管理（不重新签发证书）：\n\n"
+            "1. 打开 config.json 的 enable_https（缺 https_port 时补 443）\n"
+            "2. 记录三份文件的哈希与还原快照，之后可正常「停用」「续期」\n"
+            "3. 若当前用户的根证书库尚未信任这张证书，会帮忙加入"
+            "（Windows 可能弹出安全提示，请选择「是」）\n\n"
+            "停用时证书信任如何处理？",
+            choices=[
+                ("remove", "停用时一并移除证书信任"),
+                ("keep", "停用时保留证书信任"),
+            ],
+        )
+        if choice is None:
+            return
+        self._start_photo_job(lambda p, s: photo_cert.adopt(p, s, choice == "remove"))
 
     def _on_photo_enable(self) -> None:
         if not question(

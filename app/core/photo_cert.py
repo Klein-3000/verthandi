@@ -26,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from cryptography import x509
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
@@ -45,9 +46,11 @@ __all__ = [
     "ENV_OVERRIDE",
     "PhotoResult",
     "PhotoStatus",
+    "adopt",
     "config_path",
     "disable",
     "enable",
+    "list_photos",
     "photos_dir",
     "renew",
     "status",
@@ -84,6 +87,8 @@ class PhotoStatus:
     can_enable: bool
     can_disable: bool
     can_renew: bool
+    subject_cn: str = ""
+    can_adopt: bool = False
 
 
 @dataclass(frozen=True)
@@ -141,6 +146,28 @@ def photos_dir(paths: Paths, settings: Settings) -> Path:
     return paths.home_dir(settings) / "data" / "photos"
 
 
+PHOTO_EXTENSIONS = (".jpg", ".jpeg", ".png")
+# hoshimi 的路由是 photos/<24hex>/<id>/oath/picture_*.jpg|png，但目录语义
+# 不归我们管：只按「photos 下最多 6 层的图片文件」宽松扫描，按修改时间倒序
+_PHOTO_SCAN_DEPTH = 6
+
+
+def list_photos(paths: Paths, settings: Settings) -> list[Path]:
+    """扫描照片目录，按修改时间倒序返回；目录不存在返回空列表。"""
+    root = photos_dir(paths, settings)
+    if not root.is_dir():
+        return []
+    found: list[Path] = []
+    base_depth = len(root.parts)
+    for path in root.rglob("*"):
+        depth = len(path.parts) - base_depth
+        if depth > _PHOTO_SCAN_DEPTH or not path.is_file():
+            continue
+        if path.suffix.lower() in PHOTO_EXTENSIONS:
+            found.append(path)
+    return sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
 def supports_photo(version: str) -> bool:
     """该版本是否带照片上传端点。版本未知时按不支持处理。"""
     parsed = parse_version(version)
@@ -192,13 +219,28 @@ def _read_state(paths: Paths, settings: Settings) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def _cert_not_after(paths: Paths, settings: Settings) -> datetime | None:
+def _cert_thumbprint(paths: Paths, settings: Settings) -> str:
+    """直接从 cert.pem 算 SHA1 指纹；读不出来返回空串。"""
     try:
-        pem = (paths.home_dir(settings) / CERT_NAME).read_bytes()
-        cert = x509.load_pem_x509_certificate(pem)
-        return cert.not_valid_after_utc
+        der = x509.load_pem_x509_certificate(
+            (paths.home_dir(settings) / CERT_NAME).read_bytes()
+        ).public_bytes(serialization.Encoding.DER)
     except (OSError, ValueError):
-        return None
+        return ""
+    return hashlib.sha1(der).hexdigest().upper()
+
+
+def _cert_info(paths: Paths, settings: Settings) -> tuple[datetime | None, str]:
+    """读取证书的到期时间与主题 CN。证书不存在或解析失败时返回 (None, "")。"""
+    try:
+        cert = x509.load_pem_x509_certificate(
+            (paths.home_dir(settings) / CERT_NAME).read_bytes()
+        )
+    except (OSError, ValueError):
+        return None, ""
+    cn_attrs = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+    cn = cn_attrs[0].value if cn_attrs else ""
+    return cert.not_valid_after_utc, str(cn)
 
 
 def _hash_matches(paths: Paths, settings: Settings, state: dict) -> tuple[bool, str]:
@@ -224,12 +266,17 @@ def status(paths: Paths, settings: Settings) -> PhotoStatus:
     state = _read_state(paths, settings)
     cert_exists = (home / CERT_NAME).is_file()
     key_exists = (home / KEY_NAME).is_file()
-    not_after = _cert_not_after(paths, settings)
+    not_after, subject_cn = _cert_info(paths, settings)
     thumbprint = ""
     if isinstance(state, dict):
         value = state.get("thumbprint")
         thumbprint = value.upper() if isinstance(value, str) else ""
+    if not thumbprint and cert_exists:
+        # 无启用记录（外部配置）时直接从 cert.pem 取指纹，UI 才有信息可展示
+        thumbprint = _cert_thumbprint(paths, settings)
     trusted = is_trusted(thumbprint) if thumbprint and cert_exists else False
+    # 没有启用记录但证书文件齐全：可以「接管」（外部 ps1 / 手工配置的证书）
+    adoptable = state is None and cert_exists and key_exists and data is not None
 
     enabled = bool(data.get("enable_https")) if data else False
     try:
@@ -254,6 +301,7 @@ def status(paths: Paths, settings: Settings) -> PhotoStatus:
         can_enable: bool = False,
         can_disable: bool = False,
         can_renew: bool = False,
+        can_adopt: bool = False,
     ) -> PhotoStatus:
         return PhotoStatus(
             level=level,
@@ -268,6 +316,8 @@ def status(paths: Paths, settings: Settings) -> PhotoStatus:
             can_enable=can_enable,
             can_disable=can_disable,
             can_renew=can_renew,
+            subject_cn=subject_cn,
+            can_adopt=can_adopt,
         )
 
     if data is None:
@@ -283,6 +333,15 @@ def status(paths: Paths, settings: Settings) -> PhotoStatus:
         )
 
     if not enabled and state is None:
+        if adoptable:
+            return build(
+                "off",
+                "证书文件已存在，尚未启用",
+                "home 目录下已有 cert.pem / key.pem，但 config.json 未打开 "
+                "enable_https，也没有启用记录。点「接管」可以纳入管理：打开 "
+                "enable_https 并建立记录，不重新签发证书。",
+                can_adopt=True,
+            )
         return build(
             "off",
             "未启用",
@@ -300,12 +359,21 @@ def status(paths: Paths, settings: Settings) -> PhotoStatus:
         )
 
     if state is None:
+        if adoptable:
+            return build(
+                "warn",
+                "已启用（外部配置）",
+                "config.json 里的 enable_https 为 true，证书文件也在，但没有启用"
+                "记录（可能是官方脚本或手工配置的）。点「接管」可以纳入管理："
+                "建立记录后即可正常停用与续期，不重新签发证书。",
+                can_adopt=True,
+            )
         return build(
             "warn",
-            "已启用，但不是本程序改的",
-            "config.json 里的 enable_https 为 true，但没有启用记录，"
-            "无法自动还原原配置。若证书是你自己配的，请手动管理；"
-            "若要交给我们管理，请先删除证书文件再重新启用。",
+            "已启用，但没有可管理的证书",
+            "config.json 里的 enable_https 为 true，但 home 目录下没有 "
+            "cert.pem / key.pem，无法自动管理。若证书是你自己配的，请手动管理；"
+            "若要交给我们管理，请自行清理后重新启用。",
         )
 
     intact, culprit = _hash_matches(paths, settings, state)
@@ -498,6 +566,134 @@ def _rollback(
             pass
 
 
+def _key_matches(cert_pem: bytes, key_pem: bytes) -> bool:
+    """证书与私钥是否配对（公钥一致）。任一解析失败返回 False。"""
+    try:
+        cert = x509.load_pem_x509_certificate(cert_pem)
+        key = serialization.load_pem_private_key(key_pem, password=None)
+        cert_pub = cert.public_key()
+        if not isinstance(cert_pub, rsa.RSAPublicKey):
+            return False
+        return key.public_key().public_numbers() == cert_pub.public_numbers()
+    except (ValueError, TypeError, UnsupportedAlgorithm):
+        return False
+
+
+def adopt(
+    paths: Paths, settings: Settings, remove_trust_on_disable: bool
+) -> PhotoResult:
+    """接管外部配置的证书（官方 ps1 无 state 时的手工配置场景）。
+
+    以现有 cert.pem / key.pem 为准，不重新签发；把「当前 config 去掉
+    enable_https」作为停用时的还原快照，再按现有文件哈希建立启用记录。
+    根证书库未信任这张证书时会顺手加入（信任是我们加的，停用时必移除；
+    已信任的则按 remove_trust_on_disable 决定停用时是否移除）。
+    """
+    home = paths.home_dir(settings)
+    data, error = _read_config(paths, settings)
+    if data is None:
+        return PhotoResult(False, "config_unavailable", error)
+
+    cert_file = home / CERT_NAME
+    key_file = home / KEY_NAME
+    if not cert_file.is_file() or not key_file.is_file():
+        return PhotoResult(
+            False,
+            "missing_files",
+            "home 目录下没有 cert.pem / key.pem，无法接管。"
+            "这种证书路径不归本程序管理，请手动处理。",
+        )
+    if _read_state(paths, settings) is not None:
+        return PhotoResult(
+            False, "exists", "已存在启用记录，无需接管（可直接停用或续期）。"
+        )
+
+    try:
+        cert_pem = cert_file.read_bytes()
+        key_pem = key_file.read_bytes()
+    except OSError as e:
+        return PhotoResult(False, "missing_files", f"无法读取证书文件：{e}")
+    if not _key_matches(cert_pem, key_pem):
+        return PhotoResult(
+            False,
+            "key_mismatch",
+            "cert.pem 与 key.pem 不配对（公钥不一致），拒绝接管。",
+        )
+
+    cert = x509.load_pem_x509_certificate(cert_pem)
+    der = cert.public_bytes(serialization.Encoding.DER)
+    thumbprint = hashlib.sha1(der).hexdigest().upper()
+
+    override = os.environ.get(ENV_OVERRIDE)
+    if override not in (None, "", "1"):
+        return PhotoResult(
+            False,
+            "env_override",
+            f"环境变量 {ENV_OVERRIDE}={override} 会覆盖配置，请先移除该变量。",
+        )
+
+    config_file = config_path(paths, settings)
+    try:
+        config_bytes = config_file.read_bytes()
+    except OSError as e:
+        return PhotoResult(False, "config_unavailable", f"无法读取 config.json：{e}")
+
+    # 停用时的还原快照 = 当前内容去掉 enable_https（其余键原样保留）
+    snapshot = dict(data)
+    snapshot.pop("enable_https", None)
+    snapshot_bytes = (json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n").encode(
+        "utf-8"
+    )
+
+    created: list[Path] = []
+    trust_added = False
+    try:
+        data["enable_https"] = True
+        if "https_port" not in data:
+            data["https_port"] = DEFAULT_HTTPS_PORT
+        _write_bytes(
+            config_file,
+            (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+        )
+
+        state = _state_payload(snapshot_bytes, config_file, home, thumbprint)
+        state["remove_trust_on_disable"] = bool(remove_trust_on_disable)
+        state_file = home / STATE_NAME
+        _write_bytes(state_file, json.dumps(state, ensure_ascii=False).encode("utf-8"))
+        created.append(state_file)
+
+        if not is_trusted(thumbprint):
+            add_root_certificate(der)
+            trust_added = True
+            if not is_trusted(thumbprint):
+                raise TrustError(
+                    "证书已写入，但在根证书库中查不到（可能被安全策略拦截）"
+                )
+    except (OSError, TrustError) as e:
+        _rollback(home, config_file, config_bytes, created, thumbprint, trust_added)
+        return PhotoResult(
+            False,
+            "trust_failed"
+            if trust_added or isinstance(e, TrustError)
+            else "write_failed",
+            f"接管失败，已回滚：{e}",
+        )
+
+    now = datetime.now(UTC)
+    days_left = (cert.not_valid_after_utc - now).days
+    trust_note = (
+        "证书此前未受信任，已帮你加入根证书库。"
+        if trust_added
+        else "证书信任保持不变。"
+    )
+    return PhotoResult(
+        True,
+        "ok",
+        f"已接管现有证书（剩余 {days_left} 天，指纹 {thumbprint[:16]}…），"
+        f"{trust_note}请重启服务。",
+    )
+
+
 def disable(paths: Paths, settings: Settings) -> PhotoResult:
     home = paths.home_dir(settings)
     state = _read_state(paths, settings)
@@ -514,10 +710,15 @@ def disable(paths: Paths, settings: Settings) -> PhotoResult:
         )
 
     thumbprint = str(state.get("thumbprint", "")).upper()
-    try:
-        remove_root_certificate(thumbprint)
-    except (OSError, TrustError) as e:
-        return PhotoResult(False, "trust_failed", f"移除根证书信任失败：{e}")
+    # 接管时用户可选「停用保留证书信任」；没这个键（本程序/官方 ps1 启用的）
+    # 一律移除，维持原行为
+    remove_trust = state.get("remove_trust_on_disable")
+    remove_trust = True if remove_trust is None else bool(remove_trust)
+    if remove_trust:
+        try:
+            remove_root_certificate(thumbprint)
+        except (OSError, TrustError) as e:
+            return PhotoResult(False, "trust_failed", f"移除根证书信任失败：{e}")
 
     try:
         original = base64.b64decode(state.get("original_config", ""), validate=True)
@@ -533,7 +734,12 @@ def disable(paths: Paths, settings: Settings) -> PhotoResult:
         except OSError as e:
             return PhotoResult(False, "cleanup_failed", f"删除 {name} 失败：{e}")
 
-    return PhotoResult(True, "ok", "已停用，原配置已还原、证书信任已移除。请重启服务。")
+    trust_note = "" if remove_trust else "证书信任按接管时的选择保留在根证书库。"
+    return PhotoResult(
+        True,
+        "ok",
+        f"已停用，原配置已还原。{trust_note}请重启服务。",
+    )
 
 
 def renew(paths: Paths, settings: Settings) -> PhotoResult:
