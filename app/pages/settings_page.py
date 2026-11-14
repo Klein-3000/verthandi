@@ -112,6 +112,7 @@ class SettingsPage(QWidget):
         self.game_watcher.running_changed.connect(self._on_game_running_changed)
 
         self._port_dirty = False
+        self._server_editable = True  # 服务是否处于可修改状态（STOPPED）
         self._http_check: PortResult | None = None
         self._game_check: PortResult | None = None
         self._photo_job: _BackgroundJob | None = None
@@ -149,10 +150,9 @@ class SettingsPage(QWidget):
         layout.addWidget(self._build_essential_card())
         layout.addWidget(self._build_port_card())
         layout.addWidget(self._build_photo_card())
-        layout.addWidget(self._build_battle_card())
         layout.addWidget(self._build_appearance_card())
+        layout.addWidget(self._build_battle_card())
         layout.addWidget(self._build_behavior_card())
-        layout.addWidget(self._build_logging_card())
         layout.addWidget(self._build_cleanup_card())
         layout.addStretch(1)
 
@@ -608,30 +608,33 @@ class SettingsPage(QWidget):
 
     # ---------- 战斗操控修复 ----------
 
-    def _build_battle_card(self) -> QFrame:
-        """战斗布局异常 / 键鼠模式丢失时的一键修复，对齐官方 repair 脚本。"""
-        card = QFrame()
-        card.setObjectName("Card")
-        box = QVBoxLayout(card)
-        box.setContentsMargins(16, 16, 16, 16)
-        box.setSpacing(8)
+    def _build_battle_card(self) -> ExpandCard:
+        """战斗布局异常 / 键鼠模式丢失时的一键修复，对齐官方 repair 脚本。
 
-        title = QLabel("战斗操控")
-        title.setObjectName("CardTitle")
-        box.addWidget(title)
+        折叠卡：头部摘要显示「布局 / 键鼠」一句话状态，展开后是详情与操作。
+        """
+        card = ExpandCard(FIF.GAME, "战斗操控", "读取中…")
+        self.battle_card = card
 
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(48, 4, 24, 16)
+        layout.setSpacing(8)
+
+        # 状态详情（头部摘要的完整版，自定义布局含指纹信息）
         self.battle_status = QLabel("读取中…")
-        self.battle_status.setObjectName("MutedText")
+        self.battle_status.setStyleSheet("color: #374151; background: transparent;")
         self.battle_status.setWordWrap(True)
-        box.addWidget(self.battle_status)
+        layout.addWidget(self.battle_status)
 
         hint = QLabel(
             "战斗布局异常或键鼠模式丢失时，一键恢复 PC 内置布局；"
             "修复前自动备份当前设置，可随时还原。"
         )
-        hint.setObjectName("MutedText")
+        hint.setStyleSheet("color: #9ca3af; background: transparent;")
         hint.setWordWrap(True)
-        box.addWidget(hint)
+        layout.addWidget(hint)
 
         row = QHBoxLayout()
         row.addStretch(1)
@@ -641,8 +644,9 @@ class SettingsPage(QWidget):
         self.battle_repair_btn = PrimaryPushButton("修复布局")
         self.battle_repair_btn.clicked.connect(self._on_battle_repair)
         row.addWidget(self.battle_repair_btn)
-        box.addLayout(row)
+        layout.addLayout(row)
 
+        card.addGroupWidget(body)
         self.refresh_battle()
         return card
 
@@ -651,6 +655,7 @@ class SettingsPage(QWidget):
         st = battle_controls.status(self.paths, self.settings)
         if st.error:
             self.battle_status.setText(st.error)
+            header = "读取失败"
         else:
             if st.layout_type == "":
                 layout_text = "内置布局"
@@ -671,6 +676,22 @@ class SettingsPage(QWidget):
             self.battle_status.setText(
                 f"战斗布局：{layout_text}\n键鼠模式：{keyboard_text}"
             )
+
+            # 头部摘要用短文案，详情看展开区
+            layout_short = (
+                "内置"
+                if st.layout_type == ""
+                else ("未设置" if st.layout_type is None else "自定义")
+            )
+            keyboard_short = (
+                "键鼠"
+                if st.keyboard == battle_controls.KEYBOARD_MOUSE
+                else ("未设置" if st.keyboard is None else f"值 {st.keyboard}")
+            )
+            header = f"布局：{layout_short} · 键鼠：{keyboard_short}"
+
+        self.battle_card.card.contentLabel.setText(header)
+        self.battle_card.sync_height()
 
         running = self.game_watcher.running
         tooltip = "请先退出游戏" if running else ""
@@ -808,57 +829,74 @@ class SettingsPage(QWidget):
         self.appearance_btn.style().unpolish(self.appearance_btn)
         self.appearance_btn.style().polish(self.appearance_btn)
 
-    # ---------- 行为卡片 ----------
+    # ---------- 行为卡片（含日志） ----------
 
-    def _build_behavior_card(self) -> QFrame:
-        card = QFrame()
-        card.setObjectName("Card")
-        box = QVBoxLayout(card)
-        box.setContentsMargins(16, 16, 16, 16)
-        box.setSpacing(8)
+    def _build_behavior_card(self) -> ExpandCard:
+        """行为与日志：可折叠卡，头部为静态说明（无实时状态）。"""
+        card = ExpandCard(FIF.SETTING, "行为与日志", "启动确认、使用统计与日志记录选项")
+        self.behavior_card = card
 
-        title = QLabel("行为")
-        title.setObjectName("CardTitle")
-        box.addWidget(title)
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(48, 4, 24, 16)
+        layout.setSpacing(8)
 
+        # 1. 首次启动自动确认
         self.auto_confirm_checkbox = CheckBox("首次启动时自动确认 Hoshimi 提示")
         self.auto_confirm_checkbox.setChecked(
             self.settings.behavior.auto_confirm_first_launch
         )
         self.auto_confirm_checkbox.toggled.connect(self._on_auto_confirm_toggled)
-        box.addWidget(self.auto_confirm_checkbox)
+        layout.addWidget(self.auto_confirm_checkbox)
 
         hint = QLabel(
             "关闭后，首次启动服务时会显示警告条，需要手动点击「继续启动」。"
             "这个提示只在 data 目录不存在时出现一次。"
         )
-        hint.setObjectName("MutedText")
+        hint.setStyleSheet("color: #9ca3af; background: transparent;")
         hint.setWordWrap(True)
-        box.addWidget(hint)
+        layout.addWidget(hint)
 
+        # 2. 使用统计
+        self.telemetry_checkbox = CheckBox("允许 Hoshimi 发送使用统计")
+        self.telemetry_checkbox.toggled.connect(self._on_telemetry_toggled)
+        layout.addWidget(self.telemetry_checkbox)
+
+        self.telemetry_hint = QLabel("")
+        self.telemetry_hint.setStyleSheet("color: #9ca3af; background: transparent;")
+        self.telemetry_hint.setWordWrap(True)
+        layout.addWidget(self.telemetry_hint)
+        self._refresh_telemetry_row()
+
+        # 3. Hoshimi 服务日志
         self.hoshimi_log_checkbox = CheckBox("记录 Hoshimi 服务日志")
         self.hoshimi_log_checkbox.setChecked(self.settings.behavior.hoshimi_log)
         self.hoshimi_log_checkbox.toggled.connect(self._on_hoshimi_log_toggled)
-        box.addWidget(self.hoshimi_log_checkbox)
+        layout.addWidget(self.hoshimi_log_checkbox)
 
         hint2 = QLabel(
             "开启后日志写入 logs/hoshimi/<版本>/（每次启动一个文件，"
             "可在清理页删除）；关闭时向 hoshimi 传 --no-log，不写日志文件。"
         )
-        hint2.setObjectName("MutedText")
+        hint2.setStyleSheet("color: #9ca3af; background: transparent;")
         hint2.setWordWrap(True)
-        box.addWidget(hint2)
+        layout.addWidget(hint2)
 
-        self.telemetry_checkbox = CheckBox("允许 Hoshimi 发送使用统计")
-        self.telemetry_checkbox.toggled.connect(self._on_telemetry_toggled)
-        box.addWidget(self.telemetry_checkbox)
+        # 4. 会话日志
+        self.log_checkbox = CheckBox("记录日志到文件（logs/session-*.log）")
+        self.log_checkbox.setChecked(self.settings.behavior.log_to_file)
+        self.log_checkbox.toggled.connect(self._on_log_toggled)
+        layout.addWidget(self.log_checkbox)
 
-        self.telemetry_hint = QLabel("")
-        self.telemetry_hint.setObjectName("MutedText")
-        self.telemetry_hint.setWordWrap(True)
-        box.addWidget(self.telemetry_hint)
-        self._refresh_telemetry_row()
+        log_hint = QLabel(
+            "关闭后，出现问题时将无法提供完整日志。仅在确认服务稳定时关闭。"
+        )
+        log_hint.setStyleSheet("color: #9ca3af; background: transparent;")
+        log_hint.setWordWrap(True)
+        layout.addWidget(log_hint)
 
+        card.addGroupWidget(body)
         return card
 
     # ---------- Hoshimi 使用统计 ----------
@@ -874,7 +912,12 @@ class SettingsPage(QWidget):
         self.telemetry_checkbox.blockSignals(True)
         self.telemetry_checkbox.setChecked(enabled)
         self.telemetry_checkbox.blockSignals(False)
-        self.telemetry_checkbox.setEnabled(supported)
+
+        # 与照片卡统一心智模型：凡写 home/config.json，服务运行中一律禁改
+        self.telemetry_checkbox.setEnabled(supported and self._server_editable)
+        self.telemetry_checkbox.setToolTip(
+            "服务运行中，请先停止服务" if self._server_editable is False else ""
+        )
 
         if supported:
             self.telemetry_hint.setText(
@@ -886,6 +929,8 @@ class SettingsPage(QWidget):
             self.telemetry_hint.setText(
                 "当前 hoshimi 版本不带使用统计（0.0.8 起才引入），此项无效。"
             )
+        # 提示文案行数可能变化，展开状态下重新贴合卡片高度
+        self.behavior_card.sync_height()
 
     def _on_telemetry_toggled(self, checked: bool) -> None:
         if not supports_telemetry(self._telemetry_version()):
@@ -942,30 +987,7 @@ class SettingsPage(QWidget):
         )
         self.settings_changed.emit("behavior")
 
-    # ---------- 日志卡片 ----------
-
-    def _build_logging_card(self) -> QFrame:
-        card = QFrame()
-        card.setObjectName("Card")
-        box = QVBoxLayout(card)
-        box.setContentsMargins(16, 16, 16, 16)
-        box.setSpacing(8)
-
-        title = QLabel("日志")
-        title.setObjectName("CardTitle")
-        box.addWidget(title)
-
-        self.log_checkbox = CheckBox("记录日志到文件（logs/session-*.log）")
-        self.log_checkbox.setChecked(self.settings.behavior.log_to_file)
-        self.log_checkbox.toggled.connect(self._on_log_toggled)
-        box.addWidget(self.log_checkbox)
-
-        hint = QLabel("关闭后，出现问题时将无法提供完整日志。仅在确认服务稳定时关闭。")
-        hint.setObjectName("MutedText")
-        hint.setWordWrap(True)
-        box.addWidget(hint)
-
-        return card
+    # ---------- 日志文件开关 ----------
 
     def _on_log_toggled(self, checked: bool) -> None:
         self.settings.behavior.log_to_file = checked
@@ -1629,9 +1651,11 @@ class SettingsPage(QWidget):
         self.game_spin.setEnabled(editable)
         self.apply_btn.setEnabled(editable and self._port_dirty)
 
-        # 行为/日志开关不受服务状态影响
+        # 行为/日志开关不受服务状态影响；遥测例外（写 hoshimi 的 config.json）
+        self._server_editable = editable
         self.auto_confirm_checkbox.setEnabled(True)
         self.log_checkbox.setEnabled(True)
+        self._refresh_telemetry_row()
 
         # 照片卡的可点击状态跟着服务状态走
         self.refresh_photo(editable)
