@@ -13,7 +13,9 @@ from app.core.prepare_process import PrepareProcess
 class PrepareDialog(MessageBoxBase):
     """prepare 进度对话框。模态（带遮罩），可取消。"""
 
-    def __init__(self, prep: PrepareProcess, parent=None):
+    def __init__(
+        self, prep: PrepareProcess, parent=None, download_missing: bool = False
+    ):
         if parent is None:
             from PySide6.QtWidgets import QApplication
 
@@ -23,6 +25,8 @@ class PrepareDialog(MessageBoxBase):
         self._elapsed = 0
         self._last_line = ""
         self._result_code: int | None = None
+        # 补资源模式耗时完全不同于常规提取，标题上要能看出在做什么
+        self._phase = "正在初始化（补齐资源）…" if download_missing else "正在初始化…"
 
         self.widget.setMinimumSize(640, 420)
 
@@ -30,7 +34,7 @@ class PrepareDialog(MessageBoxBase):
         layout.setContentsMargins(16, 16, 16, 0)
         layout.setSpacing(10)
 
-        self.status = QLabel("正在初始化…")
+        self.status = QLabel(self._phase)
         self.status.setObjectName("PrepareStatus")
         layout.addWidget(self.status)
 
@@ -65,7 +69,7 @@ class PrepareDialog(MessageBoxBase):
     def _update_status(self) -> None:
         mm = self._elapsed // 60
         ss = self._elapsed % 60
-        head = f"正在初始化… 已用时 {mm:02d}:{ss:02d}"
+        head = f"{self._phase} 已用时 {mm:02d}:{ss:02d}"
         if self._last_line:
             self.status.setText(f"{head}\n{self._last_line[:120]}")
         else:

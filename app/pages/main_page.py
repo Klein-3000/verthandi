@@ -22,7 +22,7 @@ from app.core.hoshimi_finder import scan_versions
 from app.core.log_bus import LogBus, LogSource
 from app.core.paths import Paths
 from app.core.preflight import CheckItem, Severity, run_preflight
-from app.core.prepare_process import PrepareProcess
+from app.core.prepare_process import PrepareProcess, supports_download_missing
 from app.core.runtime_layout import (
     UNKNOWN_VERSION,
     RuntimeRef,
@@ -49,6 +49,7 @@ from app.widgets.fluent_message import (
 )
 from app.widgets.log_view import LogView
 from app.widgets.prepare_dialog import PrepareDialog
+from app.widgets.prepare_options_dialog import PrepareOptionsDialog
 from app.widgets.telemetry_dialog import ask_telemetry_consent
 from app.widgets.toast import show_toast
 
@@ -502,10 +503,11 @@ class MainPage(QWidget):
             )
             return
 
-        if not self._confirm_prepare(client_exe.parent):
+        options = self._confirm_prepare(client_exe.parent)
+        if options is None:
             return
 
-        self._start_prepare(client_exe.parent)
+        self._start_prepare(client_exe.parent, options[0], options[1])
 
     def _prompt_select_client(self) -> bool:
         ok = question(
@@ -547,21 +549,26 @@ class MainPage(QWidget):
         self.refresh_status()
         return True
 
-    def _confirm_prepare(self, client_dir: Path) -> bool:
+    def _confirm_prepare(self, client_dir: Path) -> tuple[bool, bool] | None:
+        """确认并收集选项。返回 (是否补资源, 是否下载全部语音)，取消时为 None。"""
         ref = resolve_runtime(self.paths, self.settings)
-        return question(
+        dialog = PrepareOptionsDialog(
             self,
-            "初始化运行文件",
-            "初始化将从客户端提取运行文件，可能需要 1–2 分钟。\n"
-            "期间请勿关闭 Verthandi。\n\n"
-            f"游戏目录：{client_dir}\n"
-            f"hoshimi 版本：{ref.version}\n"
-            f"运行文件：{ref.directory}\n\n"
-            "初始化先写入临时目录，完成后再整体替换；失败或取消不会影响现有运行文件。",
-            yes_text="开始初始化",
+            client_dir=client_dir,
+            version=ref.version,
+            runtime_dir=ref.directory,
+            allow_download_missing=supports_download_missing(ref.version),
         )
+        if not dialog.exec():
+            return None
+        return dialog.download_missing(), dialog.download_all()
 
-    def _start_prepare(self, client_dir: Path) -> None:
+    def _start_prepare(
+        self,
+        client_dir: Path,
+        download_missing: bool = False,
+        download_all: bool = False,
+    ) -> None:
         ref = resolve_runtime(self.paths, self.settings)
         try:
             staging = create_staging(self.paths, self.settings, ref.version)
@@ -577,12 +584,17 @@ class MainPage(QWidget):
         self._prep.finished.connect(self._on_prepare_finished)
         self._prep.failed_to_start.connect(self._on_prepare_failed)
 
-        if not self._prep.start(client_dir, staging):
+        if not self._prep.start(
+            client_dir,
+            staging,
+            download_missing=download_missing,
+            download_all=download_all,
+        ):
             self._discard_pending()
             self._on_prepare_failed("无法启动 prepare 进程")
             return
 
-        self._prep_dialog = PrepareDialog(self._prep, self)
+        self._prep_dialog = PrepareDialog(self._prep, self, download_missing)
         self._prep_dialog.exec()
 
     def _on_prepare_finished(self, code: int) -> None:

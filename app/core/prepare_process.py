@@ -17,6 +17,18 @@ from app.core.settings import Settings
 CREATE_NEW_CONSOLE = 0x00000010
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 
+# --download-missing / --all 从 0.0.10 起才被官方文档正式支持
+# （0.0.8/0.0.9 的二进制里有 download-missing，但只有帮助文本，未文档化）
+DOWNLOAD_MISSING_MIN_VERSION = (0, 0, 10)
+
+
+def supports_download_missing(version: str) -> bool:
+    """该版本是否支持 prepare --download-missing。版本未知时按不支持处理。"""
+    parts = (version or "").split(".")
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        return False
+    return tuple(int(p) for p in parts) >= DOWNLOAD_MISSING_MIN_VERSION
+
 
 class PrepareProcess(QObject):
     """运行 hoshimi.exe prepare 的子进程封装。
@@ -45,8 +57,19 @@ class PrepareProcess(QObject):
     def running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
-    def start(self, client_dir: Path, runtime_dir: Path) -> bool:
-        """runtime_dir 指向 staging 目录：prepare 只往临时目录写，正式目录不受影响。"""
+    def start(
+        self,
+        client_dir: Path,
+        runtime_dir: Path,
+        *,
+        download_missing: bool = False,
+        download_all: bool = False,
+    ) -> bool:
+        """runtime_dir 指向 staging 目录：prepare 只往临时目录写，正式目录不受影响。
+
+        download_missing：无需登录官服，从官方 CDN 补齐缺失资源后提取运行文件；
+        download_all：连同全部语言的语音资源一起下载（需与前者同用）。
+        """
         if self.running:
             return False
 
@@ -66,6 +89,12 @@ class PrepareProcess(QObject):
             *hoshimi_log_args(
                 self.paths, self.settings, exe, exe.parent.name, self.log_bus
             ),
+        ]
+        if download_missing:
+            cmd.append("--download-missing")
+            if download_all:
+                cmd.append("--all")
+        cmd += [
             "--client-dir",
             str(client_dir),
             "--home",
