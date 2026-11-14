@@ -163,6 +163,64 @@ def scan_runtimes(paths: Paths, settings: Settings) -> list[RuntimeEntry]:
     return entries
 
 
+def scan_battle_backups(paths: Paths, settings: Settings) -> tuple[int, int]:
+    """战斗布局备份的 (份数, 总字节数)。"""
+    from app.core.battle_controls import backup_dir
+
+    root = backup_dir(paths, settings)
+    if not root.is_dir():
+        return 0, 0
+    count = 0
+    total = 0
+    for f in root.glob("battle-controls-*.json"):
+        if not f.is_file():
+            continue
+        count += 1
+        try:
+            total += f.stat().st_size
+        except OSError:
+            pass
+    return count, total
+
+
+def delete_battle_backups(paths: Paths, settings: Settings, days: int) -> int:
+    """按策略删除战斗布局备份，返回删除份数。
+
+    days > 0：删除超过 days 天的；days < 0：只保留最近一份。
+    无论哪种策略，**总是保留最新一份**，保证「还原备份」永远有目标。
+    """
+    from app.core.battle_controls import list_backups
+
+    backups = list_backups(paths, settings)  # 已按修改时间倒序
+    if len(backups) <= 1:
+        return 0
+
+    newest, rest = backups[0], backups[1:]
+    if days < 0:
+        targets = rest
+    else:
+        cutoff = datetime.now() - timedelta(days=days)
+        targets = []
+        for path in rest:
+            try:
+                mtime = datetime.fromtimestamp(path.stat().st_mtime)
+            except OSError:
+                continue
+            if mtime < cutoff:
+                targets.append(path)
+
+    deleted = 0
+    for path in targets:
+        if path == newest:
+            continue
+        try:
+            path.unlink()
+            deleted += 1
+        except OSError:
+            pass
+    return deleted
+
+
 def scan_logs(paths: Paths, settings: Settings) -> LogInfo:
     """统计日志：应用会话日志（session-*.log）+ hoshimi 服务日志
     （logs/hoshimi/<version>/*.log）。"""

@@ -73,6 +73,10 @@ class CleanupDialog(MessageBoxBase):
         self.log_card.setObjectName("Card")
         self.scroll_layout.addWidget(self.log_card)
 
+        self.backup_card = QFrame()
+        self.backup_card.setObjectName("Card")
+        self.scroll_layout.addWidget(self.backup_card)
+
         self.scroll_layout.addStretch(1)
 
         # 底部操作区：复用 MessageBoxBase 的取消按钮作为“关闭”
@@ -85,6 +89,7 @@ class CleanupDialog(MessageBoxBase):
         self._setup_version_card()
         self._setup_runtime_card()
         self._setup_log_card()
+        self._setup_backup_card()
 
     def _setup_version_card(self):
         # 清空旧 UI
@@ -247,6 +252,62 @@ class CleanupDialog(MessageBoxBase):
 
     # ---------- 状态更新 ----------
 
+    def _setup_backup_card(self):
+        if self.backup_card.layout():
+            QWidget().setLayout(self.backup_card.layout())
+
+        layout = QVBoxLayout(self.backup_card)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+
+        header = QHBoxLayout()
+        title = QLabel("战斗布局备份")
+        title.setObjectName("CardTitle")
+        header.addWidget(title)
+
+        self.backup_stat_label = QLabel()
+        self.backup_stat_label.setObjectName("MutedText")
+        header.addWidget(self.backup_stat_label)
+
+        header.addStretch(1)
+
+        self.btn_clean_backups = QPushButton("清理备份")
+        self.btn_clean_backups.setObjectName("ToolbarButton")
+        self.btn_clean_backups.setProperty("variant", "danger")
+        self.btn_clean_backups.clicked.connect(self._on_clean_backups)
+        header.addWidget(self.btn_clean_backups)
+        layout.addLayout(header)
+
+        count, total = cm.scan_battle_backups(self.paths, self.settings)
+        self.backup_stat_label.setText(f"(共 {count} 份, 约 {cm.format_size(total)})")
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("清理策略："))
+        self.backup_combo = ComboBox()
+        self.backup_combo.addItem("不清理", userData=0)
+        self.backup_combo.addItem("只保留最近一份", userData=-1)
+        self.backup_combo.addItem("保留最近 7 天", userData=7)
+        self.backup_combo.addItem("保留最近 30 天", userData=30)
+        self.backup_combo.currentIndexChanged.connect(self._update_backup_btn_state)
+        row.addWidget(self.backup_combo)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        hint = QLabel(
+            "备份由「修复布局」「还原备份」自动生成，含当前布局与键鼠模式。"
+            "无论选择哪种策略，最近一份都会被保留。"
+        )
+        hint.setObjectName("MutedText")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self._update_backup_btn_state()
+
+    # ---------- 状态更新 ----------
+
+    def _update_backup_btn_state(self):
+        self.btn_clean_backups.setEnabled(self.backup_combo.currentData() != 0)
+
     def _update_version_stat(self):
         total = sum(v.size_bytes for cb, v in self._version_checks if cb.isChecked())
         self.version_stat_label.setText(f"(选中约 {cm.format_size(total)})")
@@ -320,3 +381,22 @@ class CleanupDialog(MessageBoxBase):
 
         cm.delete_logs(self.paths, self.settings, days, self.active_log_path)
         self._setup_log_card()
+
+    def _on_clean_backups(self):
+        days = self.backup_combo.currentData()
+        if days == 0:
+            return
+
+        label = "只保留最近一份" if days < 0 else f"保留最近 {days} 天"
+        ok = question(
+            self,
+            "确认清理",
+            f"确定要按「{label}」清理战斗布局备份吗？\n\n此操作无法恢复。",
+            yes_text="确认清理",
+            danger=True,
+        )
+        if not ok:
+            return
+
+        cm.delete_battle_backups(self.paths, self.settings, days)
+        self._setup_backup_card()

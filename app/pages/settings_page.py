@@ -657,7 +657,11 @@ class SettingsPage(QWidget):
             elif st.layout_type is None:
                 layout_text = "未设置"
             else:
-                layout_text = f"自定义（{st.layout_type}）"
+                # 原始值是几百字符的 base64：只给指纹与长度，完整内容在修复前的备份里
+                layout_text = (
+                    f"自定义（指纹 {battle_controls.layout_fingerprint(st.layout_type)}，"
+                    f"{len(st.layout_type)} 字符）"
+                )
             if st.keyboard is None:
                 keyboard_text = "未设置"
             elif st.keyboard == battle_controls.KEYBOARD_MOUSE:
@@ -665,7 +669,7 @@ class SettingsPage(QWidget):
             else:
                 keyboard_text = f"值 {st.keyboard}"
             self.battle_status.setText(
-                f"战斗布局：{layout_text}　·　键鼠模式：{keyboard_text}"
+                f"战斗布局：{layout_text}\n键鼠模式：{keyboard_text}"
             )
 
         running = self.game_watcher.running
@@ -709,7 +713,8 @@ class SettingsPage(QWidget):
             self,
             "还原战斗布局",
             f"将从备份 {backup_file.name} 恢复战斗布局与控制模式，"
-            "当前值会被覆盖（不产生新备份）。\n\n请确认已退出游戏。",
+            "当前值会被覆盖（覆盖前会先备份当前值，可再还原回来）。\n\n"
+            "请确认已退出游戏。",
             yes_text="还原",
         ):
             return
@@ -1070,14 +1075,19 @@ class SettingsPage(QWidget):
             versions = cm.scan_versions(self.paths, self.settings)
             runtimes = cm.scan_runtimes(self.paths, self.settings)
             log_info = cm.scan_logs(self.paths, self.settings)
+            backup_count, backup_size = cm.scan_battle_backups(
+                self.paths, self.settings
+            )
 
             total = sum(v.size_bytes for v in versions)
             total += sum(r.size_bytes for r in runtimes)
             total += log_info.total_size_bytes
+            total += backup_size
 
             self.disk_usage_label.setText(
                 f"当前占用：约 {cm.format_size(total)}"
-                f"（版本 {len(versions)} 个，runtime {len(runtimes)} 项，日志 {log_info.count} 个）"
+                f"（版本 {len(versions)} 个，runtime {len(runtimes)} 项，"
+                f"日志 {log_info.count} 个，布局备份 {backup_count} 份）"
             )
 
             # 判断是否要显示日志警告

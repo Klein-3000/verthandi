@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import winreg
 from dataclasses import dataclass
@@ -30,6 +31,7 @@ __all__ = [
     "BattleResult",
     "BattleStatus",
     "backup_dir",
+    "layout_fingerprint",
     "list_backups",
     "repair",
     "restore",
@@ -161,6 +163,29 @@ def _write_backup(paths: Paths, settings, data: dict, keyboard: int | None) -> P
     return path
 
 
+def layout_fingerprint(value: str) -> str:
+    """布局数据的短指纹（MD5 前 8 位），用于判断「布局有没有变过」。
+
+    原始值是几百字符的 base64，直接展示既无信息量又会撑宽界面，
+    UI 只显示指纹与长度；完整内容仍在修复前的备份 JSON 里。
+    """
+    return hashlib.md5(value.encode("utf-8")).hexdigest()[:8]
+
+
+def _apply_layout(data: dict, layout: dict | None, keyboard: int | None) -> None:
+    """按备份载荷写回注册表。备份里缺的字段从设置中删除（对齐官方 -Restore）。"""
+    for field in LAYOUT_FIELDS:
+        if layout is not None and field in layout:
+            data[field] = layout[field]
+        else:
+            data.pop(field, None)
+    _write_prefs(data)
+    if keyboard is None:
+        _delete_keyboard()
+    else:
+        _write_keyboard(int(keyboard))
+
+
 # ---------- 状态 / 修复 / 还原 ----------
 
 
@@ -190,20 +215,42 @@ def repair(paths: Paths, settings, *, game_running: bool) -> BattleResult:
     if data is None:
         return BattleResult(False, "no_prefs", error)
 
+    original = dict(data)
+    original_keyboard = _read_keyboard()
     try:
-        backup_file = _write_backup(paths, settings, data, _read_keyboard())
+        backup_file = _write_backup(paths, settings, data, original_keyboard)
         data["battle_ui_cur_type"] = ""
         data["battle_ui_cur_alpha_value"] = REPAIR_ALPHA
         _write_prefs(data)
         _write_keyboard(KEYBOARD_MOUSE)
     except OSError as e:
-        return BattleResult(False, "write_failed", f"修复失败（备份保留在原处）：{e}")
+        # 两处写入之间失败会留下「布局已复位、键鼠没改」的半状态，用原值回滚
+        rolled_back = _rollback(original, original_keyboard)
+        suffix = (
+            "已自动回滚到修复前的设置。"
+            if rolled_back
+            else "自动回滚也失败了，请用备份还原。"
+        )
+        return BattleResult(False, "write_failed", f"修复失败：{e}。{suffix}")
 
     return BattleResult(
         True,
         "ok",
         f"已恢复 PC 战斗布局并启用键鼠模式。备份：{backup_file}",
     )
+
+
+def _rollback(original: dict, keyboard: int | None) -> bool:
+    """把注册表写回修复前的内容；成功返回 True。"""
+    try:
+        _write_prefs(original)
+        if keyboard is None:
+            _delete_keyboard()
+        else:
+            _write_keyboard(keyboard)
+    except OSError:
+        return False
+    return True
 
 
 def restore(
@@ -231,20 +278,26 @@ def restore(
     if data is None:
         return BattleResult(False, "no_prefs", error)
 
+    # 还原是破坏性操作：当前值若与目标不同，先留一份，保证还原本身也可回退
+    current_keyboard = _read_keyboard()
+    current_layout = {field: data[field] for field in LAYOUT_FIELDS if field in data}
+    target_layout = dict(layout) if isinstance(layout, dict) else {}
+    changed = current_layout != target_layout or current_keyboard != keyboard
+    safety: Path | None = None
+    if changed:
+        try:
+            safety = _write_backup(paths, settings, data, current_keyboard)
+        except OSError as e:
+            return BattleResult(False, "write_failed", f"还原前备份当前设置失败：{e}")
+
     try:
-        for field in LAYOUT_FIELDS:
-            if layout is not None and field in layout:
-                data[field] = layout[field]
-            else:
-                data.pop(field, None)
-        _write_prefs(data)
-        if keyboard is None:
-            _delete_keyboard()
-        else:
-            _write_keyboard(int(keyboard))
+        _apply_layout(data, layout if isinstance(layout, dict) else None, keyboard)
     except (OSError, TypeError, ValueError) as e:
         return BattleResult(False, "write_failed", f"还原失败：{e}")
 
+    note = f"，当前设置已备份为 {safety.name}" if safety is not None else ""
     return BattleResult(
-        True, "ok", f"已从备份恢复战斗布局与控制模式：{backup_file.name}"
+        True,
+        "ok",
+        f"已从备份恢复战斗布局与控制模式：{backup_file.name}{note}",
     )
