@@ -19,20 +19,26 @@ Verthandi 是一个为 [Hoshimi](https://github.com/Enigfrank/Hoshimi) 量身定
 
 ## 🖼️ 程序预览
 
-### 主页面
+### 1. 主页面
 ![主页面](assets/main.png)
 
-### 设置页面
+### 2. 设置页面
 ![设置页面](assets/settings.png)
 
-#### "清凉" 外观切换
+#### 2.1 誓约
+![誓约画廊](assets/settings_photo_gallery.png)
+![“誓约照片” 选项卡, 未启用证书](assets/settings_photo_disabled.png)
+![“誓约照片” 选项卡，启用证书](assets/settings_photo_enabled.png)
+
+
+#### 2.2 "清凉" 外观切换 (点击 “角色外观” 选项卡)
 ![普通外观](assets/settings_appearance_false.png)
 ![清凉外观](assets/settings_appearance_true.png)
 
 > **💡 注意**
 > 并非所有角色都有“清凉”开关（例如**陵光**没有，**帕尔瓦蒂**有）。修改后需重启游戏生效。
 
-### 关于页面
+### 3. 关于页面
 ![关于页面](assets/about.png)
 
 ---
@@ -175,6 +181,7 @@ uv run pyinstaller Verthandi.spec
 git config core.hooksPath .githooks
 ```
 之后每次 `git commit` 都会对暂存区里的 `.py` 执行 `ruff check` 与 `ruff format --check`，任一不通过即中止提交。手动检查用 `uv run ruff check .` 与 `uv run ruff format --check .`，格式化用 `uv run ruff format .`。
+
 ---
 
 ## 🙏 致谢与许可
