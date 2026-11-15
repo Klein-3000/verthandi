@@ -1,13 +1,23 @@
 from __future__ import annotations
 
-import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from app.core.hoshimi_finder import version_key
+from app.core.hoshimi_finder import find_hoshimi_exe, version_key
 from app.core.paths import Paths
+from app.core.runtime_layout import (
+    MANIFEST_NAME,
+    PREV_PREFIX,
+    RUNTIME_SUBDIR,
+    STAGING_PREFIX,
+    dir_size,
+    read_manifest_file,
+    resolve_runtime,
+    runtime_root,
+    validate_runtime,
+)
 from app.core.settings import Settings
 
 
@@ -20,10 +30,17 @@ class VersionInfo:
 
 
 @dataclass
-class BackupInfo:
-    name: str
+class RuntimeEntry:
+    """runtimes/ 下的一个条目：按版本目录、临时目录，或 backup/ 里的旧备份。"""
+
+    kind: str  # runtime / staging / legacy
+    label: str
     path: Path
     size_bytes: int
+    is_current: bool
+    complete: bool
+    detail: str = ""
+    deletable: bool = True
 
 
 @dataclass
@@ -45,16 +62,7 @@ def format_size(size_bytes: int) -> str:
 
 def get_dir_size(path: Path) -> int:
     """计算目录的总大小（仅计算文件）。"""
-    total = 0
-    if not path.exists():
-        return 0
-    for root, _dirs, files in os.walk(path):
-        for f in files:
-            try:
-                total += os.path.getsize(os.path.join(root, f))
-            except OSError:
-                pass
-    return total
+    return dir_size(path)
 
 
 # ---------- 扫描 ----------
@@ -65,7 +73,9 @@ def scan_versions(paths: Paths, settings: Settings) -> list[VersionInfo]:
     if not bin_dir.exists():
         return []
 
-    current_version = settings.server.version
+    # 自动选择模式下 server.version 为空，用解析结果判定"当前"，否则会误删在用的版本
+    _exe, resolved, _auto = find_hoshimi_exe(paths, settings)
+    current_version = settings.server.version or resolved
     results = []
 
     for d in bin_dir.iterdir():
@@ -83,52 +93,182 @@ def scan_versions(paths: Paths, settings: Settings) -> list[VersionInfo]:
     return results
 
 
-def scan_runtime_backups(paths: Paths, settings: Settings) -> list[BackupInfo]:
-    runtime = paths.runtime_dir(settings)
-    backup_dir = runtime.parent / "backup"
-    if not backup_dir.exists():
-        return []
+def scan_runtimes(paths: Paths, settings: Settings) -> list[RuntimeEntry]:
+    """列出所有 runtime 条目：按版本目录、崩溃残留的临时目录、旧版备份。"""
+    ref = resolve_runtime(paths, settings)
+    entries: list[RuntimeEntry] = []
 
-    results = []
-    for d in backup_dir.iterdir():
-        if not d.is_dir() or not d.name.startswith("runtime-"):
+    root = runtime_root(paths, settings)
+    if root.is_dir():
+        for d in root.iterdir():
+            if not d.is_dir() or d.name.startswith(PREV_PREFIX):
+                continue
+            if d.name.startswith(STAGING_PREFIX):
+                entries.append(
+                    RuntimeEntry(
+                        kind="staging",
+                        label=d.name,
+                        path=d,
+                        size_bytes=get_dir_size(d),
+                        is_current=False,
+                        complete=False,
+                        detail="未完成的临时目录",
+                    )
+                )
+                continue
+
+            runtime = d / RUNTIME_SUBDIR
+            manifest = read_manifest_file(d / MANIFEST_NAME)
+            complete, missing = validate_runtime(runtime)
+            bits: list[str] = []
+            if manifest is not None and manifest.prepared_at:
+                bits.append(f"准备于 {manifest.prepared_label}")
+            if missing:
+                bits.append("缺 " + "、".join(missing[:3]))
+            if not (paths.bin_dir(settings) / d.name / "hoshimi.exe").exists():
+                bits.append("无对应 hoshimi")
+            entries.append(
+                RuntimeEntry(
+                    kind="runtime",
+                    label=d.name,
+                    path=d,
+                    size_bytes=get_dir_size(d),
+                    is_current=d.name == ref.version,
+                    complete=complete,
+                    detail=" · ".join(bits),
+                    deletable=d.name != ref.version,
+                )
+            )
+
+    backup_root = root.parent / "backup"
+    if backup_root.is_dir():
+        for d in backup_root.iterdir():
+            if not d.is_dir() or not d.name.startswith("runtime-"):
+                continue
+            entries.append(
+                RuntimeEntry(
+                    kind="legacy",
+                    label=d.name,
+                    path=d,
+                    size_bytes=get_dir_size(d),
+                    is_current=False,
+                    complete=False,
+                    detail="旧版备份",
+                )
+            )
+
+    entries.sort(
+        key=lambda e: (e.is_current, e.kind == "legacy", e.label), reverse=True
+    )
+    return entries
+
+
+def scan_battle_backups(paths: Paths, settings: Settings) -> tuple[int, int]:
+    """战斗布局备份的 (份数, 总字节数)。"""
+    from app.core.battle_controls import backup_dir
+
+    root = backup_dir(paths, settings)
+    if not root.is_dir():
+        return 0, 0
+    count = 0
+    total = 0
+    for f in root.glob("battle-controls-*.json"):
+        if not f.is_file():
             continue
-        size = get_dir_size(d)
-        results.append(BackupInfo(d.name, d, size))
+        count += 1
+        try:
+            total += f.stat().st_size
+        except OSError:
+            pass
+    return count, total
 
-    results.sort(key=lambda x: x.name, reverse=True)
-    return results
+
+def delete_battle_backups(paths: Paths, settings: Settings, days: int) -> int:
+    """按策略删除战斗布局备份，返回删除份数。
+
+    days > 0：删除超过 days 天的；days < 0：只保留最近一份。
+    无论哪种策略，**总是保留最新一份**，保证「还原备份」永远有目标。
+    """
+    from app.core.battle_controls import list_backups
+
+    backups = list_backups(paths, settings)  # 已按修改时间倒序
+    if len(backups) <= 1:
+        return 0
+
+    newest, rest = backups[0], backups[1:]
+    if days < 0:
+        targets = rest
+    else:
+        cutoff = datetime.now() - timedelta(days=days)
+        targets = []
+        for path in rest:
+            try:
+                mtime = datetime.fromtimestamp(path.stat().st_mtime)
+            except OSError:
+                continue
+            if mtime < cutoff:
+                targets.append(path)
+
+    deleted = 0
+    for path in targets:
+        if path == newest:
+            continue
+        try:
+            path.unlink()
+            deleted += 1
+        except OSError:
+            pass
+    return deleted
 
 
 def scan_logs(paths: Paths, settings: Settings) -> LogInfo:
+    """统计日志：应用会话日志（session-*.log）+ hoshimi 服务日志
+    （logs/hoshimi/<version>/*.log）。"""
     logs_dir = paths.logs_dir(settings)
-    if not logs_dir.exists():
-        return LogInfo(0, 0)
-
     count = 0
     total_size = 0
-    for f in logs_dir.glob("session-*.log"):
+
+    def _add_file(f: Path) -> None:
+        nonlocal count, total_size
         if f.is_file():
             count += 1
             try:
                 total_size += f.stat().st_size
             except OSError:
                 pass
+
+    if logs_dir.exists():
+        for f in logs_dir.glob("session-*.log"):
+            _add_file(f)
+        hoshimi_dir = logs_dir / "hoshimi"
+        if hoshimi_dir.is_dir():
+            for f in hoshimi_dir.glob("*/*.log"):
+                _add_file(f)
+
     return LogInfo(count, total_size)
 
 
 # ---------- 删除 ----------
 
 
-def delete_versions(items: list[VersionInfo]) -> None:
+def delete_versions(
+    items: list[VersionInfo],
+    paths: Paths | None = None,
+    settings: Settings | None = None,
+) -> None:
+    """删除 hoshimi 版本。给了 paths/settings 时连带删除同名 runtime，避免留下孤儿。"""
     for item in items:
         if item.is_current:
             continue
         shutil.rmtree(item.path, ignore_errors=True)
+        if paths is not None and settings is not None:
+            shutil.rmtree(runtime_root(paths, settings) / item.name, ignore_errors=True)
 
 
-def delete_backups(items: list[BackupInfo]) -> None:
+def delete_runtimes(items: list[RuntimeEntry]) -> None:
     for item in items:
+        if item.is_current or not item.deletable:
+            continue
         shutil.rmtree(item.path, ignore_errors=True)
 
 

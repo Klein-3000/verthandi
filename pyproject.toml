@@ -5,9 +5,11 @@ description = "Hoshimi 服务端的桌面控制台，提供图形化启停、切
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "cryptography>=44",
     "psutil>=7.2.2",
     "pycryptodome>=4.2.0",
     "pyside6>=6.12.0",
+    "pyside6-fluent-widgets>=1.11.3",
 ]
 
 [[tool.uv.index]]
@@ -19,4 +21,9 @@ ignore = [
     "DTZ005", "DTZ006", # 忽略本地时间未带时区的问题（桌面端单机使用，无需严格时区）
     "BLE001",           # 忽略 `except Exception:`（GUI 应用必须用大网兜底，防止程序闪退）
     "S110", "S112",     # 忽略 `try-except-pass` 或 `continue`（常见于探测和清理逻辑）
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.4",
 ]

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import re
 import shutil
-import subprocess
-import sys
 import zipfile
 from pathlib import Path
+
+from app.core.hoshimi_probe import probe_version
 
 
 class ImportError(Exception):
@@ -119,41 +119,13 @@ def validate(temp_dir: Path) -> None:
         raise ImportError("no_exe", "临时目录中缺少 hoshimi.exe")
 
 
-_VERSION_RE_H = re.compile(r"当前版本[：:]\s*([0-9]+\.[0-9]+\.[0-9]+)")
 _VERSION_RE_NAME = re.compile(r"v?(\d+\.\d+\.\d+)")
 
 
 def detect_version(exe_path: Path, timeout: float = 5.0) -> str | None:
-    """执行 hoshimi.exe -h，解析版本号。失败返回 None。"""
-    creationflags = 0
-    startupinfo = None
-    if sys.platform == "win32":
-        creationflags = 0x08000000  # CREATE_NO_WINDOW
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = 0
-
-    try:
-        result = subprocess.run(
-            [str(exe_path), "-h"],
-            capture_output=True,
-            check=False,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            creationflags=creationflags,
-            startupinfo=startupinfo,
-            cwd=str(exe_path.parent),
-        )
-    except (subprocess.TimeoutExpired, OSError):
-        return None
-
-    text = (result.stdout or "") + (result.stderr or "")
-    m = _VERSION_RE_H.search(text)
-    if m:
-        return m.group(1)
-    return None
+    """执行 hoshimi.exe version 解析版本号（统一走 hoshimi_probe）。失败返回 None。"""
+    parsed = probe_version(exe_path, timeout)
+    return parsed[0] if parsed else None
 
 
 def detect_version_from_filename(name: str) -> str | None:

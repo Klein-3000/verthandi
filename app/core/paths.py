@@ -63,8 +63,9 @@ class Paths:
     def home_dir(self, settings) -> Path:
         return self.resolve(settings.paths.home_dir)
 
-    def runtime_dir(self, settings) -> Path:
-        return self.resolve(settings.paths.runtime_dir)
+    def runtime_root(self, settings) -> Path:
+        """runtime 的根目录；具体用哪个版本由 runtime_layout.resolve_runtime 决定。"""
+        return self.resolve(settings.paths.runtime_root)
 
     def logs_dir(self, settings) -> Path:
         return self.resolve(settings.paths.logs_dir)

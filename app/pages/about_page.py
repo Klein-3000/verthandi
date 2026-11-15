@@ -7,31 +7,40 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
-    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QScrollArea,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import FluentIcon as FIF
+from qfluentwidgets import HyperlinkButton
 
 from app import __version__
 from app.core.hoshimi_finder import find_hoshimi_exe
 from app.core.paths import Paths
+from app.core.runtime_layout import resolve_runtime
 from app.core.settings import Settings
+from app.widgets.expand_card import ExpandCard
+from app.widgets.fluent_message import warning
 from app.widgets.toast import show_toast
 
 REPO_GITHUB = "https://github.com/Klein-3000/verthandi"
 REPO_GITEE = "https://gitee.com/verthandi-v/verthandi"
 ISSUES_GITHUB = "https://github.com/Klein-3000/verthandi/issues"
 HOSHIMI_REPO = "https://github.com/Enigfrank/Hoshimi"
-LICENSE_URL = "https://www.apache.org/licenses/LICENSE-2.0"
+FLUENT_WIDGETS_REPO = "https://github.com/zhiyiYo/PyQt-Fluent-Widgets"
+
+
+def _license_file() -> Path:
+    """本地 LICENSE 文件路径：开发态在仓库根，打包后在解包目录。"""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        return Path(meipass) / "LICENSE"
+    return Path(__file__).resolve().parents[2] / "LICENSE"
 
 
 class AboutPage(QWidget):
@@ -132,34 +141,19 @@ class AboutPage(QWidget):
         hint_lbl.setWordWrap(True)
         row.addWidget(hint_lbl, 1)
 
-        open_btn = QPushButton("打开")
-        open_btn.setObjectName("IconButton")
-        open_btn.clicked.connect(lambda _=False, u=url: self._open_url(u))
+        open_btn = HyperlinkButton(url, "打开")
         row.addWidget(open_btn)
         return row
 
     # ---------- 运行环境 ----------
 
-    def _build_environment(self) -> QFrame:
-        card = QFrame()
-        card.setObjectName("Card")
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(8)
+    def _build_environment(self) -> ExpandCard:
+        card = ExpandCard(FIF.CODE, "运行环境", "Python / PySide6 / 运行模式与目录信息")
 
-        toggle = QToolButton()
-        toggle.setObjectName("PortToggle")
-        toggle.setText("运行环境")
-        toggle.setCheckable(True)
-        toggle.setChecked(False)
-        toggle.setArrowType(Qt.RightArrow)
-        toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        toggle.setCursor(Qt.PointingHandCursor)
-        layout.addWidget(toggle)
-
-        content = QWidget()
-        grid = QGridLayout(content)
-        grid.setContentsMargins(20, 4, 0, 0)
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        grid = QGridLayout(body)
+        grid.setContentsMargins(48, 4, 24, 16)
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(6)
 
@@ -182,16 +176,17 @@ class AboutPage(QWidget):
         path_rows = {
             "配置路径": self.paths.settings_path.parent,
             "home 目录": self.paths.home_dir(self.settings),
-            "runtime 目录": self.paths.runtime_dir(self.settings),
+            "runtime 目录": resolve_runtime(self.paths, self.settings).directory,
         }
 
         for i, (name, widget) in enumerate(rows):
             key = QLabel(name)
-            key.setObjectName("StatusKey")
+            # 展开卡自带样式会把 QLabel 刷成黑色，这里内联指定灰色
+            key.setStyleSheet("color: #6b7280; background: transparent;")
             key.setFixedWidth(120)
             grid.addWidget(key, i, 0)
             if widget is not None:
-                widget.setObjectName("MutedText")
+                widget.setStyleSheet("color: #1f2328; background: transparent;")
                 widget.setTextInteractionFlags(Qt.TextSelectableByMouse)
                 grid.addWidget(widget, i, 1)
             else:
@@ -199,14 +194,7 @@ class AboutPage(QWidget):
 
         grid.setColumnStretch(1, 1)
 
-        content.setVisible(False)
-        layout.addWidget(content)
-
-        def on_toggle(checked: bool) -> None:
-            content.setVisible(checked)
-            toggle.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
-
-        toggle.toggled.connect(on_toggle)
+        card.addGroupWidget(body)
         return card
 
     def _path_row(self, path: Path) -> QHBoxLayout:
@@ -215,12 +203,13 @@ class AboutPage(QWidget):
         row.setSpacing(8)
 
         label = QLabel(str(path))
-        label.setObjectName("MutedText")
+        label.setStyleSheet("color: #1f2328; background: transparent;")
+        label.setWordWrap(True)  # 长路径自动折行，避免把"打开"按钮挤出可视区
         label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         row.addWidget(label, 1)
 
-        btn = QPushButton("打开")
-        btn.setObjectName("IconButton")
+        btn = HyperlinkButton()
+        btn.setText("打开")
         btn.clicked.connect(lambda _=False, p=path: self._open_path(p))
         row.addWidget(btn)
         return row
@@ -246,6 +235,7 @@ class AboutPage(QWidget):
 
         for item in (
             "Hoshimi 服务端（Enigfrank）",
+            "PyQt-Fluent-Widgets（zhiyiYo，GPL-3.0）",
             "PySide6（Qt for Python，LGPL-3.0）",
             "pycryptodome",
             "psutil",
@@ -254,18 +244,36 @@ class AboutPage(QWidget):
             lbl.setObjectName("MutedText")
             box.addWidget(lbl)
 
+        lic_row = QLabel(
+            "许可证：GPL-3.0\n"
+            "本软件是自由软件：你可以自由使用、学习和修改，再分发时必须同样"
+            "以 GPL-3.0 许可证开源并提供源代码。本软件不提供任何担保。\n"
+            "Copyright (C) 2026 Klein-3000"
+        )
+        lic_row.setObjectName("MutedText")
+        lic_row.setWordWrap(True)
+        box.addWidget(lic_row)
+
         row = QHBoxLayout()
-        lic = QLabel("许可证：Apache-2.0")
-        lic.setObjectName("MutedText")
-        row.addWidget(lic)
         row.addStretch(1)
-        view_btn = QPushButton("查看许可证")
-        view_btn.setObjectName("IconButton")
-        view_btn.clicked.connect(self._on_view_license)
-        row.addWidget(view_btn)
+        lic_btn = HyperlinkButton(REPO_GITHUB, "查看项目主页")
+        row.addWidget(lic_btn)
+
+        lic_file = _license_file()
+        # 空 URL：HyperlinkButton 对无效 URL 不会开浏览器，点击行为由 _open_license 接管
+        lic_local_btn = HyperlinkButton("", "查看许可")
+        lic_local_btn.clicked.connect(lambda _=False: self._open_license(lic_file))
+        row.addWidget(lic_local_btn)
         box.addLayout(row)
 
         return card
+
+    def _open_license(self, path: Path) -> None:
+        """打开随程序分发的本地 LICENSE 文件。"""
+        if not path.exists():
+            show_toast(self, f"未找到许可文件：{path.name}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     # ---------- 通用 ----------
 
@@ -300,20 +308,20 @@ class AboutPage(QWidget):
 
     def _open_url(self, url: str) -> None:
         if not QDesktopServices.openUrl(QUrl(url)):
-            QMessageBox.warning(self, "无法打开链接", f"系统未能打开：\n{url}")
+            warning(self, "无法打开链接", f"系统未能打开：\n{url}")
 
     def _open_path(self, path: Path) -> None:
         try:
             path.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            QMessageBox.warning(
+            warning(
                 self,
                 "无法打开目录",
                 f"目录创建失败：\n{path}\n\n{e}",
             )
             return
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
-            QMessageBox.warning(
+            warning(
                 self,
                 "无法打开目录",
                 f"系统未能打开：\n{path}",
@@ -322,42 +330,3 @@ class AboutPage(QWidget):
     def _on_copy_version(self) -> None:
         QApplication.clipboard().setText(__version__)
         show_toast(self, f"已复制版本号：{__version__}")
-
-    def _on_view_license(self) -> None:
-        license_path = self.base_dir / "LICENSE"
-        if license_path.exists():
-            try:
-                text = license_path.read_text(encoding="utf-8")
-            except OSError as e:
-                text = f"读取 LICENSE 失败：{e}"
-        else:
-            text = (
-                "LICENSE 文件未找到。\n\n"
-                "Verthandi 采用 Apache License 2.0 发布。\n"
-                f"完整文本请访问：{LICENSE_URL}"
-            )
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("许可证 - Apache-2.0")
-        dialog.setMinimumSize(680, 520)
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(10)
-
-        viewer = QPlainTextEdit()
-        viewer.setObjectName("LogView")
-        viewer.setReadOnly(True)
-        viewer.setLineWrapMode(QPlainTextEdit.NoWrap)
-        viewer.setPlainText(text)
-        layout.addWidget(viewer, 1)
-
-        btn_row = QHBoxLayout()
-        btn_row.addStretch(1)
-        close_btn = QPushButton("关闭")
-        close_btn.setObjectName("ToolbarButton")
-        close_btn.clicked.connect(dialog.accept)
-        btn_row.addWidget(close_btn)
-        layout.addLayout(btn_row)
-
-        dialog.exec()

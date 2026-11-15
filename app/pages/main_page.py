@@ -1,39 +1,63 @@
 from __future__ import annotations
 
 import shutil
-from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QCheckBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import ComboBox
 
 from app.core.client_state import ClientMode, client_fingerprint, read_client_mode
 from app.core.game_process import GameWatcher, is_game_running, launch_game
-from app.core.hoshimi_finder import find_hoshimi_exe
+from app.core.hoshimi_finder import scan_versions
 from app.core.log_bus import LogBus, LogSource
 from app.core.paths import Paths
 from app.core.preflight import CheckItem, Severity, run_preflight
-from app.core.prepare_process import PrepareProcess
+from app.core.prepare_process import PrepareProcess, supports_download_missing
+from app.core.runtime_layout import (
+    UNKNOWN_VERSION,
+    RuntimeRef,
+    RuntimeSwapError,
+    create_staging,
+    finalize,
+    manifest_path,
+    read_manifest,
+    resolve_runtime,
+)
 from app.core.server_process import ServerProcess, ServerState
 from app.core.settings import ClientEntry, Settings, SettingsStore
 from app.core.switch_client import SwitchError, SwitchOperation
+from app.core.telemetry_config import (
+    read_telemetry,
+    supports_telemetry,
+    write_telemetry,
+)
+from app.widgets.fluent_message import (
+    critical,
+    information,
+    question,
+    warning,
+)
 from app.widgets.log_view import LogView
 from app.widgets.prepare_dialog import PrepareDialog
+from app.widgets.prepare_options_dialog import PrepareOptionsDialog
+from app.widgets.telemetry_dialog import ask_telemetry_consent
 from app.widgets.toast import show_toast
 
 
 class MainPage(QWidget):
+    # 本页切换了 hoshimi 版本（设置页需要同步下拉框与 runtime 行）
+    version_changed = Signal()
+
     def __init__(
         self,
         base_dir: Path,
@@ -56,7 +80,7 @@ class MainPage(QWidget):
         self._preparing = False
         self._prep: PrepareProcess | None = None
         self._prep_dialog: PrepareDialog | None = None
-        self._last_backup_dir: Path | None = None
+        self._pending: tuple[RuntimeRef, Path] | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -77,6 +101,7 @@ class MainPage(QWidget):
         self.server_process.state_changed.connect(self._on_server_state)
         self.server_process.waiting_for_confirm.connect(self._on_waiting_confirm)
         self.server_process.confirm_resolved.connect(self._on_confirm_resolved)
+        self.server_process.telemetry_fallback.connect(self._on_telemetry_fallback)
         self.game_watcher.running_changed.connect(self._on_game_running_changed)
 
     # ---------- 顶部栏 ----------
@@ -166,6 +191,10 @@ class MainPage(QWidget):
     def _on_confirm_clicked(self) -> None:
         self.server_process.send_enter()
 
+    def _on_telemetry_fallback(self) -> None:
+        """兜底代答发生后提示一次：说明配置没生效，用户仍可在设置页调整。"""
+        show_toast(self, "已按当前设置代为答复 Hoshimi 使用统计")
+
     # ---------- 状态卡片 / 日志卡片 ----------
 
     def _build_status_card(self) -> QFrame:
@@ -194,10 +223,19 @@ class MainPage(QWidget):
             k = QLabel(label)
             k.setObjectName("StatusKey")
             k.setFixedWidth(110)
+            row.addWidget(k)
+            if key == "version":
+                # 版本可从本页直接切换（与设置页同一份数据、同一套写入逻辑）
+                self.version_combo = ComboBox()
+                self.version_combo.setFixedWidth(250)
+                self.version_combo.currentIndexChanged.connect(self._on_version_changed)
+                row.addWidget(self.version_combo)
+                row.addStretch(1)
+                box.addLayout(row)
+                continue
             v = QLabel("—")
             v.setObjectName("StatusValue")
             v.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            row.addWidget(k)
             row.addWidget(v, 1)
             box.addLayout(row)
             self._status_values[key] = v
@@ -248,23 +286,23 @@ class MainPage(QWidget):
             ClientMode.UNKNOWN: "Unknown",
         }.get(actual, "Unknown")
 
-        _exe, actual_version, auto_selected = find_hoshimi_exe(self.paths, s)
-        if actual_version:
-            if auto_selected:
-                version_text = f"{actual_version}（自动选择）"
-            else:
-                version_text = actual_version
-        else:
-            version_text = "—"
         home = self.paths.home_dir(s)
-        runtime = self.paths.runtime_dir(s)
+        ref = resolve_runtime(self.paths, s)
+        manifest = read_manifest(self.paths, s, ref) if ref.exists else None
+        if ref.version == UNKNOWN_VERSION:
+            runtime_text = "—（尚未安装 hoshimi）"
+        elif not ref.exists:
+            runtime_text = f"{ref.directory}（未初始化）"
+        elif manifest is not None and manifest.prepared_at:
+            runtime_text = f"{ref.directory}（准备于 {manifest.prepared_label}）"
+        else:
+            runtime_text = f"{ref.directory}（无初始化记录）"
         ports_text = f"HTTP {s.server.http_port} / 游戏 {s.server.game_port}（TCP+UDP）"
 
         self._status_values["client"].setText(client_text)
         self._status_values["connection"].setText(connection_text)
-        self._status_values["version"].setText(version_text)
         self._status_values["home"].setText(str(home))
-        self._status_values["runtime"].setText(str(runtime))
+        self._status_values["runtime"].setText(runtime_text)
         self._status_values["ports"].setText(ports_text)
 
         badge = {
@@ -275,6 +313,77 @@ class MainPage(QWidget):
 
         self._refresh_switch_btn(actual)
         self._refresh_runtime_state()
+        self._refresh_version_combo()
+
+    def _refresh_version_combo(self) -> None:
+        """重建版本下拉框。条目与设置页一致：自动选择 + 各版本（+ 目录缺失）。"""
+        versions = scan_versions(self.paths.bin_dir(self.settings))
+        current = self.settings.server.version
+
+        self.version_combo.blockSignals(True)
+        try:
+            self.version_combo.clear()
+            if versions:
+                self.version_combo.addItem(
+                    f"自动选择最新（{versions[0]}）", userData=""
+                )
+            for v in versions:
+                self.version_combo.addItem(v, userData=v)
+            if current and current not in versions:
+                self.version_combo.addItem(f"{current}（目录缺失）", userData=current)
+            if not self.version_combo.count():
+                self.version_combo.addItem("未找到 hoshimi", userData=None)
+
+            idx = self.version_combo.findData(current) if current else 0
+            self.version_combo.setCurrentIndex(
+                max(min(idx, self.version_combo.count() - 1), 0)
+            )
+        finally:
+            self.version_combo.blockSignals(False)
+
+        self._apply_version_combo_state()
+
+    def _apply_version_combo_state(self) -> None:
+        """版本下拉框的可用性：没有可选版本、或服务不是停止态时锁定。"""
+        has_versions = bool(scan_versions(self.paths.bin_dir(self.settings)))
+        stopped = self.server_process.state == ServerState.STOPPED
+        self.version_combo.setEnabled(has_versions and stopped)
+        if not has_versions:
+            self.version_combo.setToolTip("bin 目录下没有可用的 hoshimi")
+        elif not stopped:
+            self.version_combo.setToolTip("服务运行中，停止服务后可切换版本")
+        else:
+            self.version_combo.setToolTip("切换 hoshimi 版本（下次启动服务生效）")
+
+    def _on_version_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        # 服务已启动过就不能再切版本，避免"看到的版本"和"正在跑的版本"不一致
+        if self.server_process.state != ServerState.STOPPED:
+            self.refresh_status()
+            return
+
+        data = self.version_combo.currentData()
+        if data is None:
+            return
+        if data == "":
+            versions = scan_versions(self.paths.bin_dir(self.settings))
+            if not versions:
+                return
+            new_version = versions[0]
+        else:
+            new_version = data
+
+        if new_version == self.settings.server.version:
+            return
+
+        self.settings.server.version = new_version
+        self.settings_store.save(self.settings)
+        self.log_bus.emit_line(
+            LogSource.APP, f"hoshimi 版本已切换：{new_version}", "info"
+        )
+        self.refresh_status()
+        self.version_changed.emit()
 
     def _refresh_switch_btn(self, actual: ClientMode) -> None:
         if actual == ClientMode.LOCAL:
@@ -387,31 +496,28 @@ class MainPage(QWidget):
 
         client_exe = Path(client.exe_path)
         if not client_exe.exists():
-            QMessageBox.critical(
+            critical(
                 self,
                 "无法初始化",
                 f"AetherGazer.exe 不存在：\n{client_exe}",
             )
             return
 
-        if not self._confirm_prepare(client_exe.parent):
+        options = self._confirm_prepare(client_exe.parent)
+        if options is None:
             return
 
-        self._start_prepare(client_exe.parent)
+        self._start_prepare(client_exe.parent, options[0], options[1])
 
     def _prompt_select_client(self) -> bool:
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Information)
-        box.setWindowTitle("需要选择游戏目录")
-        box.setText("初始化需要指定 AetherGazer.exe 的位置。")
-        box.setInformativeText(
-            "请选择游戏安装目录下的 AetherGazer.exe 文件，而不是文件夹。"
+        ok = question(
+            self,
+            "需要选择游戏目录",
+            "初始化需要指定 AetherGazer.exe 的位置。\n\n"
+            "请选择游戏安装目录下的 AetherGazer.exe 文件，而不是文件夹。",
+            yes_text="浏览…",
         )
-        browse = box.addButton("浏览…", QMessageBox.AcceptRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(browse)
-        box.exec()
-        if box.clickedButton() is not browse:
+        if not ok:
             return False
 
         path, _ = QFileDialog.getOpenFileName(
@@ -424,11 +530,9 @@ class MainPage(QWidget):
             return False
         exe = Path(path)
         if exe.name.lower() != "aethergazer.exe":
-            box = QMessageBox(self)
-            box.setIcon(QMessageBox.Critical)
-            box.setWindowTitle("文件不匹配")
-            box.setText(f"选中的文件不是 AetherGazer.exe：\n{exe.name}")
-            box.exec()
+            critical(
+                self, "文件不匹配", f"选中的文件不是 AetherGazer.exe：\n{exe.name}"
+            )
             return False
 
         entry = self.settings.active_client() or ClientEntry(
@@ -445,217 +549,125 @@ class MainPage(QWidget):
         self.refresh_status()
         return True
 
-    def _confirm_prepare(self, client_dir: Path) -> bool:
-        runtime = self.paths.runtime_dir(self.settings)
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("初始化运行文件")
-        box.setText(
-            "初始化将从客户端提取运行文件，可能需要 1–2 分钟。\n"
-            "期间请勿关闭 Verthandi。"
+    def _confirm_prepare(self, client_dir: Path) -> tuple[bool, bool] | None:
+        """确认并收集选项。返回 (是否补资源, 是否下载全部语音)，取消时为 None。"""
+        ref = resolve_runtime(self.paths, self.settings)
+        dialog = PrepareOptionsDialog(
+            self,
+            client_dir=client_dir,
+            version=ref.version,
+            runtime_dir=ref.directory,
+            allow_download_missing=supports_download_missing(ref.version),
         )
-        box.setInformativeText(
-            f"游戏目录：{client_dir}\n"
-            f"运行文件：{runtime}\n\n"
-            "如果 runtime 已存在，将先备份到 backup/ 目录。"
-        )
-        start = box.addButton("开始初始化", QMessageBox.AcceptRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(start)
-        box.exec()
-        return box.clickedButton() is start
+        if not dialog.exec():
+            return None
+        return dialog.download_missing(), dialog.download_all()
 
-    def _backup_runtime_before_prepare(self) -> tuple[bool, Path | None]:
-        """返回 (ok, backup_dir)。
-        - ok=False: 备份失败（已弹错）
-        - ok=True, backup_dir=None: 无 runtime，无需备份
-        - ok=True, backup_dir=Path: 备份成功
-        """
-        runtime = self.paths.runtime_dir(self.settings)
-        if not runtime.exists():
-            return True, None
-
-        parent = runtime.parent
-        backup_root = parent / "backup"
-        version = self.settings.prepare.last_prepared_version or "unknown"
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        backup_dir = backup_root / f"runtime-{version}-{ts}"
-
+    def _start_prepare(
+        self,
+        client_dir: Path,
+        download_missing: bool = False,
+        download_all: bool = False,
+    ) -> None:
+        ref = resolve_runtime(self.paths, self.settings)
         try:
-            backup_root.mkdir(parents=True, exist_ok=True)
-            try:
-                runtime.rename(backup_dir)
-            except OSError:
-                shutil.move(str(runtime), str(backup_dir))
-            try:
-                (backup_dir / "version.txt").write_text(
-                    version + "\n", encoding="utf-8"
-                )
-            except OSError:
-                pass
+            staging = create_staging(self.paths, self.settings, ref.version)
         except OSError as e:
-            QMessageBox.critical(
-                self,
-                "无法备份旧运行文件",
-                f"备份旧 runtime 失败，初始化已取消。\n\n{e}",
-            )
-            return False, None
-
-        self.log_bus.emit_line(
-            LogSource.APP,
-            f"旧运行文件已备份：{backup_dir}",
-            "info",
-        )
-        return True, backup_dir
-
-    def _start_prepare(self, client_dir: Path) -> None:
-        self._preparing = True
-        self._apply_prepare_state()
-
-        ok, backup_dir = self._backup_runtime_before_prepare()
-        if not ok:
-            self._preparing = False
-            self._apply_prepare_state()
+            critical(self, "无法初始化", f"无法创建临时目录：\n{e}")
             return
 
-        self._last_backup_dir = backup_dir
+        self._preparing = True
+        self._pending = (ref, staging)
+        self._apply_prepare_state()
 
         self._prep = PrepareProcess(self.paths, self.settings, self.log_bus, self)
         self._prep.finished.connect(self._on_prepare_finished)
         self._prep.failed_to_start.connect(self._on_prepare_failed)
 
-        if not self._prep.start(client_dir):
+        if not self._prep.start(
+            client_dir,
+            staging,
+            download_missing=download_missing,
+            download_all=download_all,
+        ):
+            self._discard_pending()
             self._on_prepare_failed("无法启动 prepare 进程")
             return
 
-        self._prep_dialog = PrepareDialog(self._prep, self)
+        self._prep_dialog = PrepareDialog(self._prep, self, download_missing)
         self._prep_dialog.exec()
 
     def _on_prepare_finished(self, code: int) -> None:
         self._preparing = False
         self._apply_prepare_state()
 
-        if code == 0:
-            version_info = self.server_process.version()
-            version = self.settings.server.version or (
-                version_info[0] if version_info else ""
-            )
-            client_dir = self.paths.active_client_dir(self.settings)
-            self.settings.prepare.last_prepared_version = version
-            self.settings.prepare.last_prepared_at = datetime.now().isoformat(
-                timespec="seconds"
-            )
-            self.settings.prepare.client_fingerprint = client_fingerprint(client_dir)
-            self.settings_store.save(self.settings)
-            self.log_bus.emit_line(LogSource.APP, "初始化完成", "info")
-            self._last_backup_dir = None
-            self.refresh_status()
+        pending = self._pending
+        self._pending = None
+        if pending is None:
             return
+        ref, staging = pending
 
-        self._handle_prepare_failure(code)
-
-    def _handle_prepare_failure(self, code: int) -> None:
-        backup_dir = self._last_backup_dir
-        self._last_backup_dir = None
-
-        if backup_dir is None or not backup_dir.exists():
+        if code != 0:
+            shutil.rmtree(staging, ignore_errors=True)
             if code == -1:
-                self.log_bus.emit_line(
-                    LogSource.APP, "初始化已取消，runtime 可能不完整", "warning"
-                )
-                QMessageBox.warning(
+                self.log_bus.emit_line(LogSource.APP, "初始化已取消", "warning")
+                warning(
                     self,
                     "初始化已取消",
-                    "初始化被取消，runtime 可能不完整。\n请重新执行初始化后再启动服务。",
+                    "初始化被取消，现有运行文件未受影响。",
                 )
             else:
-                QMessageBox.critical(
+                self.log_bus.emit_line(
+                    LogSource.APP, f"初始化失败，退出码 {code}", "error"
+                )
+                critical(
                     self,
                     "初始化失败",
-                    f"hoshimi prepare 退出码 {code}。\n请查看日志面板。",
+                    f"hoshimi prepare 退出码 {code}。\n"
+                    "现有运行文件未受影响，详情见日志面板。",
                 )
             return
 
-        reason = "初始化被取消" if code == -1 else f"初始化失败（退出码 {code}）"
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("初始化未完成")
-        box.setText(f"{reason}。")
-        box.setInformativeText(
-            "当前 runtime 可能不完整。\n\n"
-            f"此前的运行文件已备份到：\n{backup_dir}\n\n"
-            "是否恢复此前的运行文件？"
-        )
-        restore_btn = box.addButton("恢复旧运行文件", QMessageBox.AcceptRole)
-        box.addButton("保留当前并关闭", QMessageBox.RejectRole)
-        box.setDefaultButton(restore_btn)
-        box.exec()
-
-        if box.clickedButton() is restore_btn:
-            self._restore_backup(backup_dir)
-        else:
-            self.log_bus.emit_line(
-                LogSource.APP,
-                f"保留不完整的 runtime，备份仍在 {backup_dir}",
-                "warning",
-            )
-
-    def _restore_backup(self, backup_dir: Path) -> None:
-        runtime = self.paths.runtime_dir(self.settings)
-        parent = runtime.parent
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        failed_dir = parent / "backup" / f"runtime-failed-{ts}"
-
+        client_dir = self.paths.active_client_dir(self.settings)
         try:
-            failed_dir.parent.mkdir(parents=True, exist_ok=True)
-            if runtime.exists():
-                try:
-                    runtime.rename(failed_dir)
-                except OSError:
-                    shutil.move(str(runtime), str(failed_dir))
-            try:
-                backup_dir.rename(runtime)
-            except OSError:
-                shutil.move(str(backup_dir), str(runtime))
-        except OSError as e:
-            QMessageBox.critical(
+            finalize(
+                ref,
+                staging,
+                target_manifest=manifest_path(self.paths, self.settings, ref),
+                client_dir=client_dir,
+                fingerprint=client_fingerprint(client_dir),
+            )
+        except RuntimeSwapError as e:
+            self.log_bus.emit_line(LogSource.APP, str(e), "error")
+            critical(
                 self,
-                "恢复失败",
-                f"无法恢复旧运行文件：\n{e}\n\n旧备份仍在：{backup_dir}",
+                "初始化未完成",
+                f"{e}\n\n旧的运行文件未被替换。"
+                + (f"\n临时目录保留在：\n{e.staging}" if e.staging else ""),
             )
             return
 
         self.log_bus.emit_line(
-            LogSource.APP,
-            f"已恢复旧运行文件（不完整的 runtime 保留在 {failed_dir}）",
-            "info",
+            LogSource.APP, f"初始化完成：{ref.version} → {ref.directory}", "info"
         )
         self.refresh_status()
 
     def _on_prepare_failed(self, message: str) -> None:
         self._preparing = False
         self._apply_prepare_state()
+        self._discard_pending()
 
-        backup_dir = self._last_backup_dir
-        self._last_backup_dir = None
+        self.log_bus.emit_line(LogSource.APP, message, "error")
+        critical(self, "初始化失败", message)
 
-        if backup_dir is not None and backup_dir.exists():
-            runtime = self.paths.runtime_dir(self.settings)
-            try:
-                if not runtime.exists():
-                    try:
-                        backup_dir.rename(runtime)
-                    except OSError:
-                        shutil.move(str(backup_dir), str(runtime))
-                    self.log_bus.emit_line(
-                        LogSource.APP,
-                        "初始化启动失败，已自动恢复旧运行文件",
-                        "warning",
-                    )
-            except OSError as e:
-                message += f"\n\n无法恢复旧运行文件：{e}\n备份位置：{backup_dir}"
-
-        QMessageBox.critical(self, "初始化失败", message)
+    def _discard_pending(self) -> None:
+        """丢弃未完成的临时目录；正式目录从未被碰过，所以这里没有"恢复"这一步。"""
+        pending = self._pending
+        self._pending = None
+        if pending is None:
+            return
+        _ref, staging = pending
+        shutil.rmtree(staging, ignore_errors=True)
 
     def _apply_prepare_state(self) -> None:
         if self._preparing:
@@ -705,6 +717,7 @@ class MainPage(QWidget):
                     "当前客户端连接官服，本地服务仅供 GM 后台使用",
                     "info",
                 )
+            self._ensure_telemetry()
             sp.start()
             return
 
@@ -714,6 +727,48 @@ class MainPage(QWidget):
         if self._confirm_stop():
             sp.stop()
 
+    def _ensure_telemetry(self) -> None:
+        """启动前把 hoshimi 的遥测答复写进 home/config.json。
+
+        必须在 serve 之前完成：hoshimi 的询问没有换行结尾、且会一直阻塞在
+        stdin 上，Verthandi 既读不到也答不上，只会表现为"启动中"卡死。
+        """
+        ref = resolve_runtime(self.paths, self.settings)
+        if not supports_telemetry(ref.version):
+            return
+
+        state = read_telemetry(self.paths, self.settings)
+        if state is True:
+            # 已开启就没什么可问的，只补一次"已答复"标记
+            self._mark_telemetry_prompted()
+            return
+        if self.settings.behavior.telemetry_prompted and state is not None:
+            return
+
+        enabled, remember = ask_telemetry_consent(self, ref.version, state)
+        ok, err = write_telemetry(self.paths, self.settings, enabled)
+        if remember:
+            self._mark_telemetry_prompted()
+        if not ok:
+            warning(
+                self,
+                "遥测选择未能保存",
+                f"无法写入 hoshimi 配置文件：\n{err}\n\n"
+                "服务仍会启动，届时 Verthandi 会按当前设置代为答复。",
+            )
+            return
+        self.log_bus.emit_line(
+            LogSource.APP,
+            "Hoshimi 使用统计：" + ("已允许发送" if enabled else "已关闭"),
+            "info",
+        )
+
+    def _mark_telemetry_prompted(self) -> None:
+        if self.settings.behavior.telemetry_prompted:
+            return
+        self.settings.behavior.telemetry_prompted = True
+        self.settings_store.save(self.settings)
+
     def _confirm_stop(self) -> bool:
         if not self.settings.behavior.confirm_before_stop_server:
             return True
@@ -722,33 +777,19 @@ class MainPage(QWidget):
         game_running = is_game_running(self.paths.active_client_dir(self.settings))
 
         if game_running and actual == ClientMode.LOCAL:
-            icon, text = (
-                QMessageBox.Warning,
-                (
-                    "游戏正在运行，停止服务会导致客户端断连，\n"
-                    "未保存的进度可能丢失。\n\n确定停止服务吗？"
-                ),
+            text = (
+                "游戏正在运行，停止服务会导致客户端断连，\n"
+                "未保存的进度可能丢失。\n\n确定停止服务吗？"
             )
         elif game_running and actual == ClientMode.OFFICIAL:
-            icon, text = (
-                QMessageBox.Warning,
-                (
-                    "游戏正在运行。当前客户端连接官服，\n"
-                    "停止本地服务不影响游戏连接。\n\n确定停止服务吗？"
-                ),
+            text = (
+                "游戏正在运行。当前客户端连接官服，\n"
+                "停止本地服务不影响游戏连接。\n\n确定停止服务吗？"
             )
         else:
-            icon, text = QMessageBox.Question, "确定要停止 Hoshimi 服务吗？"
+            text = "确定要停止 Hoshimi 服务吗？"
 
-        box = QMessageBox(self)
-        box.setIcon(icon)
-        box.setWindowTitle("停止服务")
-        box.setText(text)
-        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        box.setDefaultButton(QMessageBox.No)
-        box.button(QMessageBox.Yes).setText("停止")
-        box.button(QMessageBox.No).setText("取消")
-        return box.exec() == QMessageBox.Yes
+        return question(self, "停止服务", text, yes_text="停止")
 
     # ---------- 启动游戏 ----------
 
@@ -758,12 +799,12 @@ class MainPage(QWidget):
 
         client = self.settings.active_client()
         if client is None or not client.exe_path:
-            QMessageBox.critical(self, "无法启动游戏", "尚未选择游戏目录")
+            critical(self, "无法启动游戏", "尚未选择游戏目录")
             return
 
         exe = Path(client.exe_path)
         if not exe.exists():
-            QMessageBox.critical(
+            critical(
                 self,
                 "无法启动游戏",
                 f"AetherGazer.exe 不存在：\n{exe}",
@@ -776,7 +817,7 @@ class MainPage(QWidget):
             show_toast(self, "游戏已启动")
             self.game_watcher.refresh()
         else:
-            QMessageBox.critical(self, "无法启动游戏", msg)
+            critical(self, "无法启动游戏", msg)
 
     # ---------- 快捷入口 ----------
 
@@ -785,14 +826,14 @@ class MainPage(QWidget):
         try:
             path.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            QMessageBox.warning(
+            warning(
                 self,
                 "无法打开目录",
                 f"{label}目录创建失败：\n{path}\n\n{e}",
             )
             return
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
-            QMessageBox.warning(
+            warning(
                 self,
                 "无法打开目录",
                 f"系统未能打开目录：\n{path}",
@@ -809,7 +850,7 @@ class MainPage(QWidget):
     def _on_open_gm(self) -> None:
         url = f"http://127.0.0.1:{self.settings.server.http_port}/gm/"
         if not QDesktopServices.openUrl(QUrl(url)):
-            QMessageBox.warning(
+            warning(
                 self,
                 "无法打开 GM 后台",
                 f"系统未能打开浏览器：\n{url}",
@@ -827,9 +868,7 @@ class MainPage(QWidget):
             return
 
         if self.game_watcher.running:
-            QMessageBox.warning(
-                self, "无法切换", "游戏正在运行，请先退出客户端再切换。"
-            )
+            warning(self, "无法切换", "游戏正在运行，请先退出客户端再切换。")
             return
 
         op = self._build_switch_op()
@@ -868,13 +907,11 @@ class MainPage(QWidget):
 
     def _show_switch_checks(self, failures: list, target_label: str) -> None:
         lines = "\n".join(f"• {c.label}：{c.message}" for c in failures)
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("无法切换到" + target_label)
-        box.setText("切换前置检查未通过：")
-        box.setInformativeText(lines)
-        box.setStandardButtons(QMessageBox.Ok)
-        box.exec()
+        warning(
+            self,
+            "无法切换到" + target_label,
+            "切换前置检查未通过：\n" + lines,
+        )
 
     def _confirm_switch(self, target_label: str, checks: list) -> bool:
         # 服务在运行时给额外提示（不阻止）
@@ -885,11 +922,8 @@ class MainPage(QWidget):
                 "如不再需要 GM 后台，建议切换后停止服务以释放端口。"
             )
 
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Question)
-        box.setWindowTitle(f"切换到{target_label}")
-        box.setText(f"将把客户端切换到{target_label}。")
-        box.setInformativeText(
+        box_text = (
+            f"将把客户端切换到{target_label}。\n\n"
             "会修改以下内容：\n"
             "• 客户端 url.txt\n"
             "• resources.assets 中的 SDK 端点\n"
@@ -898,11 +932,7 @@ class MainPage(QWidget):
             f"{extra}\n\n"
             "确定切换吗？"
         )
-        switch_btn = box.addButton("确认切换", QMessageBox.AcceptRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(switch_btn)
-        box.exec()
-        return box.clickedButton() is switch_btn
+        return question(self, f"切换到{target_label}", box_text, yes_text="确认切换")
 
     def _do_switch(self, op: SwitchOperation, target: str, target_label: str) -> None:
         from PySide6.QtCore import Qt as _Qt
@@ -925,13 +955,13 @@ class MainPage(QWidget):
         except SwitchError as e:
             progress.close()
             if e.code == "admin_required":
-                QMessageBox.critical(
+                critical(
                     self,
                     "需要管理员权限",
                     "hosts 中有需要清理的回环映射，请以管理员身份重启 Verthandi 后重试。",
                 )
             else:
-                QMessageBox.critical(self, "切换失败", e.message)
+                critical(self, "切换失败", e.message)
             return
 
         progress.close()
@@ -942,7 +972,7 @@ class MainPage(QWidget):
         self.refresh_status()
 
         if result.needs_relogin:
-            QMessageBox.information(
+            information(
                 self,
                 f"已切换到{target_label}",
                 result.message + "\n\n如遇登录问题，请重新输入账号密码。",
@@ -955,57 +985,28 @@ class MainPage(QWidget):
             self.log_bus.emit_line(
                 LogSource.APP, f"[preflight] {i.label}: {i.message}", "error"
             )
-        short = "\n".join(f"• {i.label}：{i.message}" for i in errors)
-        details = "\n\n".join(
-            f"• {i.label}\n  {i.message}\n  → {i.fix_hint}" for i in errors
-        )
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Critical)
-        box.setWindowTitle("无法启动服务")
-        box.setText(f"启动前检查发现 {len(errors)} 项问题：")
-        box.setInformativeText(short)
-        box.setDetailedText(details)
-        box.setStandardButtons(QMessageBox.Ok)
-        box.exec()
+        # 每条信息只出现一次：问题描述 + 缩进的修复建议
+        lines = [f"启动前检查发现 {len(errors)} 项问题：", ""]
+        for i in errors:
+            lines.append(f"• {i.label}：{i.message}")
+            if i.fix_hint:
+                lines.append(f"  → {i.fix_hint}")
+        information(self, "无法启动服务", "\n".join(lines))
 
     def _confirm_preflight_warnings(self, warnings: list[CheckItem]) -> bool:
-        filtered: list[CheckItem] = []
-        show_dismiss_box = False
-        for w in warnings:
-            if w.id == "prepare-unknown" and self.settings.prepare.warning_dismissed_at:
-                continue
-            if w.id == "prepare-unknown":
-                show_dismiss_box = True
-            filtered.append(w)
-        if not filtered:
+        if not warnings:
             return True
 
-        short = "\n".join(f"• {i.label}：{i.message}" for i in filtered)
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("启动服务")
-        box.setText("启动前检查有以下提示：")
-        box.setInformativeText(
-            short
-            + "\n\n如果启动服务或游戏时出现问题，请重新执行「初始化」。\n\n仍要启动服务吗？"
+        short = "\n".join(f"• {i.label}：{i.message}" for i in warnings)
+        return question(
+            self,
+            "启动服务",
+            "启动前检查有以下提示：\n\n"
+            + short
+            + "\n\n如果启动服务或游戏时出现问题，请重新执行「初始化」。\n\n仍要启动服务吗？",
+            yes_text="仍要启动",
+            danger=True,
         )
-        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        box.setDefaultButton(QMessageBox.No)
-        box.button(QMessageBox.Yes).setText("仍要启动")
-        box.button(QMessageBox.No).setText("取消")
-
-        dismiss_check: QCheckBox | None = None
-        if show_dismiss_box:
-            dismiss_check = QCheckBox("不再提示这条警告")
-            box.setCheckBox(dismiss_check)
-
-        ok = box.exec() == QMessageBox.Yes
-        if ok and dismiss_check is not None and dismiss_check.isChecked():
-            self.settings.prepare.warning_dismissed_at = datetime.now().isoformat(
-                timespec="seconds"
-            )
-            self.settings_store.save(self.settings)
-        return ok
 
     # ---------- 服务状态 / 游戏状态 ----------
 
@@ -1013,6 +1014,8 @@ class MainPage(QWidget):
         self._apply_server_state(ServerState(state))
 
     def _apply_server_state(self, state: ServerState) -> None:
+        # 只要点过"启动服务"（STARTING 起）就锁定版本，避免用户错认正在运行的版本
+        self._apply_version_combo_state()
         if state == ServerState.STOPPED:
             self.server_btn.setText("启动服务")
             self.server_btn.setEnabled(True)

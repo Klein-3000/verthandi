@@ -3,25 +3,23 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import CheckBox, ComboBox, MessageBoxBase
 
 from app.core import cleanup_manager as cm
 from app.core.paths import Paths
 from app.core.settings import Settings
+from app.widgets.fluent_message import question
 
 
-class CleanupDialog(QDialog):
+class CleanupDialog(MessageBoxBase):
     def __init__(
         self,
         paths: Paths,
@@ -29,25 +27,27 @@ class CleanupDialog(QDialog):
         active_log_path: Path | None,
         parent=None,
     ):
-        super().__init__(parent)
+        if parent is None:
+            from PySide6.QtWidgets import QApplication
+
+            parent = QApplication.activeWindow()
+        super().__init__(parent=parent)
         self.paths = paths
         self.settings = settings
         self.active_log_path = active_log_path
 
-        self.setWindowTitle("空间清理中心")
-        self.setMinimumSize(640, 600)
-        self.setModal(True)
+        self._version_checks: list[tuple[CheckBox, cm.VersionInfo]] = []
+        self._runtime_checks: list[tuple[CheckBox, cm.RuntimeEntry]] = []
 
-        self._version_checks: list[tuple[QCheckBox, cm.VersionInfo]] = []
-        self._backup_checks: list[tuple[QCheckBox, cm.BackupInfo]] = []
+        self.widget.setMinimumSize(640, 520)
 
         self._build_ui()
         self._load_all_data()
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout = self.viewLayout
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -65,31 +65,31 @@ class CleanupDialog(QDialog):
         self.version_card.setObjectName("Card")
         self.scroll_layout.addWidget(self.version_card)
 
-        self.backup_card = QFrame()
-        self.backup_card.setObjectName("Card")
-        self.scroll_layout.addWidget(self.backup_card)
+        self.runtime_card = QFrame()
+        self.runtime_card.setObjectName("Card")
+        self.scroll_layout.addWidget(self.runtime_card)
 
         self.log_card = QFrame()
         self.log_card.setObjectName("Card")
         self.scroll_layout.addWidget(self.log_card)
 
+        self.backup_card = QFrame()
+        self.backup_card.setObjectName("Card")
+        self.scroll_layout.addWidget(self.backup_card)
+
         self.scroll_layout.addStretch(1)
 
-        # 底部操作区（仅保留关闭）
-        bottom = QHBoxLayout()
-        bottom.addStretch(1)
-        btn_close = QPushButton("关闭")
-        btn_close.setObjectName("ToolbarButton")
-        btn_close.clicked.connect(self.reject)
-        bottom.addWidget(btn_close)
-        layout.addLayout(bottom)
+        # 底部操作区：复用 MessageBoxBase 的取消按钮作为“关闭”
+        self.yesButton.hide()
+        self.cancelButton.setText("关闭")
 
     # ---------- 数据加载与绘制 ----------
 
     def _load_all_data(self):
         self._setup_version_card()
-        self._setup_backup_card()
+        self._setup_runtime_card()
         self._setup_log_card()
+        self._setup_backup_card()
 
     def _setup_version_card(self):
         # 清空旧 UI
@@ -132,11 +132,11 @@ class CleanupDialog(QDialog):
         else:
             for v in versions:
                 if v.is_current:
-                    cb = QCheckBox(f"{v.name}  (当前使用中，不可清理)")
+                    cb = CheckBox(f"{v.name}  (当前使用中，不可清理)")
                     cb.setEnabled(False)
                     cb.setChecked(False)
                 else:
-                    cb = QCheckBox(f"{v.name}  ({cm.format_size(v.size_bytes)})")
+                    cb = CheckBox(f"{v.name}  ({cm.format_size(v.size_bytes)})")
                     cb.setChecked(True)
                     cb.stateChanged.connect(self._update_version_stat)
                     self._version_checks.append((cb, v))
@@ -145,51 +145,61 @@ class CleanupDialog(QDialog):
 
         self._update_version_stat()
 
-    def _setup_backup_card(self):
-        if self.backup_card.layout():
-            QWidget().setLayout(self.backup_card.layout())
-        self._backup_checks.clear()
+    def _setup_runtime_card(self):
+        if self.runtime_card.layout():
+            QWidget().setLayout(self.runtime_card.layout())
+        self._runtime_checks.clear()
 
-        layout = QVBoxLayout(self.backup_card)
+        layout = QVBoxLayout(self.runtime_card)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(8)
 
         header = QHBoxLayout()
-        title = QLabel("runtime 备份")
+        title = QLabel("runtime")
         title.setObjectName("CardTitle")
         header.addWidget(title)
 
-        self.backup_stat_label = QLabel()
-        self.backup_stat_label.setObjectName("MutedText")
-        header.addWidget(self.backup_stat_label)
+        self.runtime_stat_label = QLabel()
+        self.runtime_stat_label.setObjectName("MutedText")
+        header.addWidget(self.runtime_stat_label)
 
         header.addStretch(1)
 
-        self.btn_clean_backups = QPushButton("清理选中")
-        self.btn_clean_backups.setObjectName("ToolbarButton")
-        self.btn_clean_backups.setProperty("variant", "danger")
-        self.btn_clean_backups.clicked.connect(self._on_clean_backups)
-        header.addWidget(self.btn_clean_backups)
+        self.btn_clean_runtimes = QPushButton("清理选中")
+        self.btn_clean_runtimes.setObjectName("ToolbarButton")
+        self.btn_clean_runtimes.setProperty("variant", "danger")
+        self.btn_clean_runtimes.clicked.connect(self._on_clean_runtimes)
+        header.addWidget(self.btn_clean_runtimes)
         layout.addLayout(header)
 
-        backups = cm.scan_runtime_backups(self.paths, self.settings)
+        entries = cm.scan_runtimes(self.paths, self.settings)
         list_box = QVBoxLayout()
         list_box.setSpacing(6)
 
-        if not backups:
-            lbl = QLabel("没有找到 runtime 备份")
+        if not entries:
+            lbl = QLabel("runtimes/ 下还没有任何运行文件")
             lbl.setObjectName("MutedText")
             list_box.addWidget(lbl)
         else:
-            for b in backups:
-                cb = QCheckBox(f"{b.name}  ({cm.format_size(b.size_bytes)})")
-                cb.setChecked(True)
-                cb.stateChanged.connect(self._update_backup_stat)
-                self._backup_checks.append((cb, b))
+            for e in entries:
+                text = f"{e.label}  ({cm.format_size(e.size_bytes)})"
+                if e.detail:
+                    text += f"  ·  {e.detail}"
+                if e.is_current:
+                    cb = CheckBox(f"{text}  （当前使用中）")
+                    cb.setEnabled(False)
+                elif not e.deletable:
+                    cb = CheckBox(text)
+                    cb.setEnabled(False)
+                else:
+                    cb = CheckBox(text)
+                    cb.setChecked(True)
+                    cb.stateChanged.connect(self._update_runtime_stat)
+                    self._runtime_checks.append((cb, e))
                 list_box.addWidget(cb)
         layout.addLayout(list_box)
 
-        self._update_backup_stat()
+        self._update_runtime_stat()
 
     def _setup_log_card(self):
         if self.log_card.layout():
@@ -224,11 +234,11 @@ class CleanupDialog(QDialog):
 
         row = QHBoxLayout()
         row.addWidget(QLabel("清理策略："))
-        self.log_combo = QComboBox()
-        self.log_combo.addItem("不清理", 0)
-        self.log_combo.addItem("清理所有历史日志", 1)
-        self.log_combo.addItem("保留最近 7 天", 7)
-        self.log_combo.addItem("保留最近 30 天", 30)
+        self.log_combo = ComboBox()
+        self.log_combo.addItem("不清理", userData=0)
+        self.log_combo.addItem("清理所有历史日志", userData=1)
+        self.log_combo.addItem("保留最近 7 天", userData=7)
+        self.log_combo.addItem("保留最近 30 天", userData=30)
         self.log_combo.currentIndexChanged.connect(self._update_log_btn_state)
         row.addWidget(self.log_combo)
         row.addStretch(1)
@@ -242,15 +252,71 @@ class CleanupDialog(QDialog):
 
     # ---------- 状态更新 ----------
 
+    def _setup_backup_card(self):
+        if self.backup_card.layout():
+            QWidget().setLayout(self.backup_card.layout())
+
+        layout = QVBoxLayout(self.backup_card)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+
+        header = QHBoxLayout()
+        title = QLabel("战斗布局备份")
+        title.setObjectName("CardTitle")
+        header.addWidget(title)
+
+        self.backup_stat_label = QLabel()
+        self.backup_stat_label.setObjectName("MutedText")
+        header.addWidget(self.backup_stat_label)
+
+        header.addStretch(1)
+
+        self.btn_clean_backups = QPushButton("清理备份")
+        self.btn_clean_backups.setObjectName("ToolbarButton")
+        self.btn_clean_backups.setProperty("variant", "danger")
+        self.btn_clean_backups.clicked.connect(self._on_clean_backups)
+        header.addWidget(self.btn_clean_backups)
+        layout.addLayout(header)
+
+        count, total = cm.scan_battle_backups(self.paths, self.settings)
+        self.backup_stat_label.setText(f"(共 {count} 份, 约 {cm.format_size(total)})")
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("清理策略："))
+        self.backup_combo = ComboBox()
+        self.backup_combo.addItem("不清理", userData=0)
+        self.backup_combo.addItem("只保留最近一份", userData=-1)
+        self.backup_combo.addItem("保留最近 7 天", userData=7)
+        self.backup_combo.addItem("保留最近 30 天", userData=30)
+        self.backup_combo.currentIndexChanged.connect(self._update_backup_btn_state)
+        row.addWidget(self.backup_combo)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        hint = QLabel(
+            "备份由「修复布局」「还原备份」自动生成，含当前布局与键鼠模式。"
+            "无论选择哪种策略，最近一份都会被保留。"
+        )
+        hint.setObjectName("MutedText")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self._update_backup_btn_state()
+
+    # ---------- 状态更新 ----------
+
+    def _update_backup_btn_state(self):
+        self.btn_clean_backups.setEnabled(self.backup_combo.currentData() != 0)
+
     def _update_version_stat(self):
         total = sum(v.size_bytes for cb, v in self._version_checks if cb.isChecked())
         self.version_stat_label.setText(f"(选中约 {cm.format_size(total)})")
         self.btn_clean_versions.setEnabled(total > 0)
 
-    def _update_backup_stat(self):
-        total = sum(b.size_bytes for cb, b in self._backup_checks if cb.isChecked())
-        self.backup_stat_label.setText(f"(选中约 {cm.format_size(total)})")
-        self.btn_clean_backups.setEnabled(total > 0)
+    def _update_runtime_stat(self):
+        total = sum(e.size_bytes for cb, e in self._runtime_checks if cb.isChecked())
+        self.runtime_stat_label.setText(f"(选中约 {cm.format_size(total)})")
+        self.btn_clean_runtimes.setEnabled(total > 0)
 
     def _update_log_btn_state(self):
         days = self.log_combo.currentData()
@@ -263,44 +329,39 @@ class CleanupDialog(QDialog):
         if not selected:
             return
 
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("确认清理")
-        box.setText(
-            f"确定要永久删除选中的 {len(selected)} 个 hoshimi 版本吗？\n\n此操作无法恢复。"
+        ok = question(
+            self,
+            "确认清理",
+            f"确定要永久删除选中的 {len(selected)} 个 hoshimi 版本吗？\n\n此操作无法恢复。",
+            yes_text="确认清理",
+            danger=True,
         )
-        del_btn = box.addButton("确认清理", QMessageBox.DestructiveRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(del_btn)
-        box.exec()
-
-        if box.clickedButton() is not del_btn:
+        if not ok:
             return
 
-        cm.delete_versions(selected)
+        cm.delete_versions(selected, self.paths, self.settings)
         self._setup_version_card()  # 重新扫描刷新
+        self._setup_runtime_card()  # 同名 runtime 已被连带删除
 
-    def _on_clean_backups(self):
-        selected = [b for cb, b in self._backup_checks if cb.isChecked()]
+    def _on_clean_runtimes(self):
+        selected = [e for cb, e in self._runtime_checks if cb.isChecked()]
         if not selected:
             return
 
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("确认清理")
-        box.setText(
-            f"确定要永久删除选中的 {len(selected)} 个 runtime 备份吗？\n\n此操作无法恢复。"
+        ok = question(
+            self,
+            "确认清理",
+            f"确定要永久删除选中的 {len(selected)} 项 runtime 吗？\n\n"
+            "对应版本需要重新执行「初始化」才能启动服务。此操作无法恢复。",
+            yes_text="确认清理",
+            danger=True,
         )
-        del_btn = box.addButton("确认清理", QMessageBox.DestructiveRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(del_btn)
-        box.exec()
-
-        if box.clickedButton() is not del_btn:
+        if not ok:
             return
 
-        cm.delete_backups(selected)
-        self._setup_backup_card()
+        cm.delete_runtimes(selected)
+        self._setup_runtime_card()
+        self._setup_version_card()
 
     def _on_clean_logs(self):
         days = self.log_combo.currentData()
@@ -308,17 +369,34 @@ class CleanupDialog(QDialog):
             return
 
         label = "所有历史" if days == 1 else f"超过 {days} 天的"
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("确认清理")
-        box.setText(f"确定要永久删除{label}日志吗？\n\n此操作无法恢复。")
-        del_btn = box.addButton("确认清理", QMessageBox.DestructiveRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(del_btn)
-        box.exec()
-
-        if box.clickedButton() is not del_btn:
+        ok = question(
+            self,
+            "确认清理",
+            f"确定要永久删除{label}日志吗？\n\n此操作无法恢复。",
+            yes_text="确认清理",
+            danger=True,
+        )
+        if not ok:
             return
 
         cm.delete_logs(self.paths, self.settings, days, self.active_log_path)
         self._setup_log_card()
+
+    def _on_clean_backups(self):
+        days = self.backup_combo.currentData()
+        if days == 0:
+            return
+
+        label = "只保留最近一份" if days < 0 else f"保留最近 {days} 天"
+        ok = question(
+            self,
+            "确认清理",
+            f"确定要按「{label}」清理战斗布局备份吗？\n\n此操作无法恢复。",
+            yes_text="确认清理",
+            danger=True,
+        )
+        if not ok:
+            return
+
+        cm.delete_battle_backups(self.paths, self.settings, days)
+        self._setup_backup_card()

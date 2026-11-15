@@ -10,15 +10,22 @@ from app.core.game_process import is_game_running
 from app.core.hoshimi_finder import find_hoshimi_exe  # 新增
 from app.core.paths import Paths
 from app.core.port_check import check_port
+from app.core.runtime_layout import (
+    RUNTIME_REQUIRED_DIRS,
+    RUNTIME_REQUIRED_FILES,
+    read_manifest,
+    resolve_runtime,
+    validate_runtime,
+)
 from app.core.settings import Settings
 
-RUNTIME_REQUIRED_FILES = (
-    "protocol_map.json",
-    "runtime.json",
-    "tables.json",
-    "tolua.dll",
-)
-RUNTIME_REQUIRED_DIRS = ("lua",)
+__all__ = [
+    "RUNTIME_REQUIRED_DIRS",
+    "RUNTIME_REQUIRED_FILES",
+    "CheckItem",
+    "Severity",
+    "run_preflight",
+]
 
 
 class Severity(str, Enum):
@@ -91,20 +98,19 @@ def _check_hoshimi_exe(paths: Paths, settings: Settings) -> CheckItem:
 
 
 def _check_runtime(paths: Paths, settings: Settings) -> CheckItem:
-    runtime = paths.runtime_dir(settings)
+    ref = resolve_runtime(paths, settings)
+    runtime = ref.directory
     if not runtime.exists():
         return CheckItem(
             "runtime",
             "运行文件",
             False,
             Severity.ERROR,
-            f"runtime 目录不存在：{runtime}",
+            f"版本 {ref.version} 尚未初始化：{runtime}",
             "点击「初始化」",
         )
-    missing_files = [n for n in RUNTIME_REQUIRED_FILES if not (runtime / n).exists()]
-    missing_dirs = [n for n in RUNTIME_REQUIRED_DIRS if not (runtime / n).is_dir()]
-    if missing_files or missing_dirs:
-        missing = missing_files + missing_dirs
+    complete, missing = validate_runtime(runtime)
+    if not complete:
         return CheckItem(
             "runtime",
             "运行文件",
@@ -210,28 +216,29 @@ def _check_game_running(paths: Paths, settings: Settings) -> CheckItem:
 
 def _check_prepare_freshness(paths: Paths, settings: Settings) -> list[CheckItem]:
     items: list[CheckItem] = []
-    prepared = settings.prepare.last_prepared_version
-    current = settings.server.version
+    ref = resolve_runtime(paths, settings)
+    manifest = read_manifest(paths, settings, ref)
 
-    if not prepared:
+    if manifest is None:
         items.append(
             CheckItem(
                 "prepare-unknown",
                 "初始化记录",
                 False,
                 Severity.WARNING,
-                "检测到 runtime 但没有初始化记录，可能来自其他位置或初始化中断",
+                "runtime 缺少初始化记录（旧数据或由其他工具生成）",
                 "如果启动或游戏出现问题，请重新初始化",
             )
         )
-    elif current and prepared != current:
+    elif manifest.version and ref.version != manifest.version:
+        # 正常情况不会发生（版本与目录同源），仅防御手工改动过的数据
         items.append(
             CheckItem(
                 "prepare-version",
                 "运行文件版本",
                 False,
                 Severity.WARNING,
-                f"runtime 由版本 {prepared} 准备，当前 hoshimi 为 {current}",
+                f"runtime 由版本 {manifest.version} 准备，当前 hoshimi 为 {ref.version}",
                 "点击「初始化」重新 prepare",
             )
         )
@@ -240,7 +247,7 @@ def _check_prepare_freshness(paths: Paths, settings: Settings) -> list[CheckItem
             CheckItem("prepare-version", "运行文件版本", True, Severity.WARNING)
         )
 
-    stored = settings.prepare.client_fingerprint
+    stored = manifest.client_fingerprint if manifest else ""
     if stored:
         fp = client_fingerprint(paths.active_client_dir(settings))
         if fp and fp != stored:

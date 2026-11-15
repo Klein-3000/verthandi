@@ -9,7 +9,7 @@ from typing import Any
 
 from app.core.paths import Paths
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 # ---------- 类型辅助 ----------
@@ -93,57 +93,48 @@ class ServerConfig:
 
 @dataclass
 class PathsConfig:
+    """runtime 恒按版本存放在 runtime_root/<版本>/runtime 下。
+
+    custom_runtime_dir 是旧版遗留字段：v1 的 runtimeDir，或曾经的
+    「固定目录」模式路径；现在只作为 migrate_legacy 的迁移来源，
+    正常流程不再读取它。
+    """
+
     bin_dir: str = "bin"
     home_dir: str = "home"
-    runtime_dir: str = "runtime"
     logs_dir: str = "logs"
     client_switch_dir: str = "home/data/client-switch"
+    runtime_root: str = "runtimes"
+    custom_runtime_dir: str = "runtime"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "binDir": self.bin_dir,
             "homeDir": self.home_dir,
-            "runtimeDir": self.runtime_dir,
             "logsDir": self.logs_dir,
             "clientSwitchDir": self.client_switch_dir,
+            "runtimeRoot": self.runtime_root,
+            "customRuntimeDir": self.custom_runtime_dir,
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PathsConfig:
         default = cls()
+        # 旧版 runtimeDir（v1）：不是默认值就当作待迁移的旧目录保留下来
+        custom = _as_str(d.get("customRuntimeDir"))
+        legacy = _as_str(d.get("runtimeDir"))
+        if legacy and legacy not in ("", "runtime"):
+            custom = legacy
+
         return cls(
             bin_dir=_as_str(d.get("binDir"), default.bin_dir),
             home_dir=_as_str(d.get("homeDir"), default.home_dir),
-            runtime_dir=_as_str(d.get("runtimeDir"), default.runtime_dir),
             logs_dir=_as_str(d.get("logsDir"), default.logs_dir),
             client_switch_dir=_as_str(
                 d.get("clientSwitchDir"), default.client_switch_dir
             ),
-        )
-
-
-@dataclass
-class PrepareState:
-    last_prepared_version: str = ""
-    last_prepared_at: str = ""
-    client_fingerprint: str = ""
-    warning_dismissed_at: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "lastPreparedVersion": self.last_prepared_version,
-            "lastPreparedAt": self.last_prepared_at,
-            "clientFingerprint": self.client_fingerprint,
-            "warningDismissedAt": self.warning_dismissed_at,
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> PrepareState:
-        return cls(
-            last_prepared_version=_as_str(d.get("lastPreparedVersion")),
-            last_prepared_at=_as_str(d.get("lastPreparedAt")),
-            client_fingerprint=_as_str(d.get("clientFingerprint")),
-            warning_dismissed_at=_as_str(d.get("warningDismissedAt")),
+            runtime_root=_as_str(d.get("runtimeRoot"), default.runtime_root),
+            custom_runtime_dir=custom or default.custom_runtime_dir,
         )
 
 
@@ -201,6 +192,10 @@ class BehaviorConfig:
     confirm_before_stop_server: bool = True
     auto_confirm_first_launch: bool = True
     log_to_file: bool = False
+    # hoshimi 的服务日志（--log-dir logs/hoshimi/<version>/）；默认关，即 --no-log
+    hoshimi_log: bool = False
+    # 是否已经就 hoshimi 的遥测问过用户；False 时下次启动会再提醒（不含"已开启"）
+    telemetry_prompted: bool = False
     backend: str = "powershell"
 
     def to_dict(self) -> dict[str, Any]:
@@ -209,6 +204,8 @@ class BehaviorConfig:
             "confirmBeforeStopServer": self.confirm_before_stop_server,
             "autoConfirmFirstLaunch": self.auto_confirm_first_launch,
             "logToFile": self.log_to_file,
+            "hoshimiLog": self.hoshimi_log,
+            "telemetryPrompted": self.telemetry_prompted,
             "backend": self.backend,
         }
 
@@ -222,6 +219,8 @@ class BehaviorConfig:
             confirm_before_stop_server=_as_bool(d.get("confirmBeforeStopServer"), True),
             auto_confirm_first_launch=_as_bool(d.get("autoConfirmFirstLaunch"), True),
             log_to_file=_as_bool(d.get("logToFile"), False),
+            hoshimi_log=_as_bool(d.get("hoshimiLog"), False),
+            telemetry_prompted=_as_bool(d.get("telemetryPrompted"), False),
             backend=backend,
         )
 
@@ -233,9 +232,10 @@ class Settings:
     active_client_id: str = ""
     server: ServerConfig = field(default_factory=ServerConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
-    prepare: PrepareState = field(default_factory=PrepareState)
     ui: UIConfig = field(default_factory=UIConfig)
     behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
+    # v1 的 prepare 块：只在迁移旧 runtime 时读一次，不参与序列化
+    legacy_prepare: dict[str, Any] = field(default_factory=dict, repr=False)
 
     # ---------- 客户端便捷访问 ----------
 
@@ -275,7 +275,6 @@ class Settings:
             "activeClientId": self.active_client_id,
             "server": self.server.to_dict(),
             "paths": self.paths.to_dict(),
-            "prepare": self.prepare.to_dict(),
             "ui": self.ui.to_dict(),
             "behavior": self.behavior.to_dict(),
         }
@@ -293,9 +292,9 @@ class Settings:
             active_client_id=_as_str(d.get("activeClientId")),
             server=ServerConfig.from_dict(_as_dict(d.get("server"))),
             paths=PathsConfig.from_dict(_as_dict(d.get("paths"))),
-            prepare=PrepareState.from_dict(_as_dict(d.get("prepare"))),
             ui=UIConfig.from_dict(_as_dict(d.get("ui"))),
             behavior=BehaviorConfig.from_dict(_as_dict(d.get("behavior"))),
+            legacy_prepare=_as_dict(d.get("prepare")),
         )
         # active_client_id 指向不存在的条目时回退
         if clients and not any(c.id == settings.active_client_id for c in clients):

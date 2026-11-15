@@ -5,11 +5,13 @@ from pathlib import Path
 
 from PySide6.QtCore import QLibraryInfo, Qt, QTimer, QTranslator
 from PySide6.QtWidgets import QApplication
+from qfluentwidgets import Theme, setTheme, setThemeColor
 
 from app.core.app_icon import load_app_icon
 from app.core.game_process import GameWatcher
 from app.core.log_bus import LogBus, LogSource, SessionLogWriter
 from app.core.paths import Paths, detect_base_dir, resource_path
+from app.core.runtime_layout import cleanup_staging, migrate_legacy
 from app.core.server_process import ServerProcess, ServerState
 from app.core.settings import SettingsStore
 from app.core.single_instance import SingleInstance, force_foreground
@@ -28,6 +30,8 @@ class VerthandiApplication(QApplication):
         self.log_bus = LogBus()
         self.log_writer = SessionLogWriter(self.paths.logs_dir(self.settings))
         self.log_writer.bind(self.log_bus)
+
+        self._prepare_runtime_layout()
 
         self.server_process = ServerProcess(self.paths, self.settings, self.log_bus)
         self.game_watcher = GameWatcher()
@@ -71,6 +75,23 @@ class VerthandiApplication(QApplication):
 
         # 3. 延迟初始化重操作（进程扫描、日志文件）
         QTimer.singleShot(0, self._late_init)
+
+    def _prepare_runtime_layout(self) -> None:
+        """把 v1 的单 runtime 目录迁进 runtimes/，并清掉上次崩溃留下的临时目录。"""
+        result = migrate_legacy(self.paths, self.settings)
+        if result.changed:
+            self.settings_store.save(self.settings)
+            self.log_bus.emit_line(LogSource.APP, result.message, "info")
+        elif result.message:
+            self.log_bus.emit_line(LogSource.APP, result.message, "warning")
+
+        removed = cleanup_staging(self.paths, self.settings)
+        if removed:
+            self.log_bus.emit_line(
+                LogSource.APP,
+                f"已清理 {len(removed)} 个未完成的 runtime 临时目录",
+                "info",
+            )
 
     def _late_init(self) -> None:
         """在界面显示后的下一帧，开始后台任务。"""
@@ -121,6 +142,15 @@ class VerthandiApplication(QApplication):
             self.styleHints().setColorScheme(scheme)
         except (AttributeError, TypeError):
             pass
+
+        # Fluent 控件（弹窗、复选框、下拉框等）跟随同一主题设置
+        fluent_theme = {
+            "light": Theme.LIGHT,
+            "dark": Theme.DARK,
+        }.get(theme, Theme.AUTO)
+        setTheme(fluent_theme)
+        # 主题色与界面既有蓝色强调色保持一致（导航栏选中态、主按钮等）
+        setThemeColor("#2563eb")
 
     def _activate_window(self) -> None:
         self.window.bring_to_front()
