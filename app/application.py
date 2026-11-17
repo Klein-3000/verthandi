@@ -7,6 +7,7 @@ from PySide6.QtCore import QLibraryInfo, Qt, QTimer, QTranslator
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import Theme, setTheme, setThemeColor
 
+from app import __version__
 from app.core.app_icon import load_app_icon
 from app.core.game_process import GameWatcher
 from app.core.log_bus import LogBus, LogSource, SessionLogWriter
@@ -39,7 +40,7 @@ class VerthandiApplication(QApplication):
         self.setApplicationName("Verthandi")
         self.setApplicationDisplayName("Verthandi")
         self.setOrganizationName("Verthandi")
-        self.setApplicationVersion("0.1.0")
+        self.setApplicationVersion(__version__)
 
         # 图标缺失不算错误：None 时留给 Qt 的默认图标
         self._app_icon = load_app_icon()

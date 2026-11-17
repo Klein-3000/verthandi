@@ -1560,6 +1560,38 @@ class SettingsPage(QWidget):
         editable = self.server_process.state == ServerState.STOPPED
         self.apply_btn.setEnabled(editable and self._port_dirty)
 
+    def _sync_local_url_txt(self, new_http_port: int) -> bool:
+        """客户端处于本地服时，静默修改 url.txt 中的端口。
+        返回 True 表示成功，False 表示需要用户手动切服兜底。
+        """
+        client_dir = self.paths.active_client_dir(self.settings)
+        if not client_dir:
+            return False
+
+        url_path = client_dir / "AetherGazer_Data" / "StreamingAssets" / "url.txt"
+        if not url_path.exists():
+            return False
+
+        try:
+            import json
+
+            # 1. 读取现有的 JSON（保留 uId 等字段）
+            data = json.loads(url_path.read_text(encoding="utf-8"))
+            old_url = data.get("url", "")
+            if "127.0.0.1" not in old_url:
+                return False
+
+            # 2. 更新端口，并用和切服脚本完全一致的压缩格式写回
+            data["url"] = f"http://127.0.0.1:{new_http_port}/skzy-activity/gateway/get"
+            payload = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+
+            # 3. 写入文件
+            url_path.write_text(payload, encoding="utf-8")
+            return True
+        except Exception:
+            # 捕捉所有异常（如权限不足、文件被游戏锁占用）
+            return False
+
     def _on_apply_ports(self) -> None:
         new_http = self.http_spin.value()
         new_game = self.game_spin.value()
@@ -1619,15 +1651,18 @@ class SettingsPage(QWidget):
 
         actual = read_client_mode(self.paths.active_client_dir(self.settings))
         if actual == ClientMode.LOCAL and cur_http != new_http:
-            self._show_switch_hint(cur_http, new_http)
+            # 尝试自动同步 url.txt
+            if self._sync_local_url_txt(new_http):
+                show_toast(self, "客户端连接地址已同步更新")
+            else:
+                # 同步失败（如游戏未退出导致文件被锁），走原有的切服兜底提示
+                self._show_switch_hint()
 
-    def _show_switch_hint(self, old_http: int, new_http: int) -> None:
+    def _show_switch_hint(self) -> None:
         information(
             self,
             "端口已修改",
-            f"HTTP 端口已从 {old_http} 改为 {new_http}。\n\n"
-            "客户端仍指向旧端口。请到主页面点击「切换」重新生成客户端配置，"
-            "否则游戏将无法连接本地服务。",
+            "若客户端连不上本地服，先「切换到官服」再「切换到本地服」即可恢复。",
         )
 
     # ---------- 服务状态 ----------

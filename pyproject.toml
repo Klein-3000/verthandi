@@ -1,6 +1,11 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "verthandi"
-version = "0.1.0"
+# 版本号唯一来源是 app/__init__.py 的 __version__，此处自动读取，勿手写
+dynamic = ["version"]
 description = "Hoshimi 服务端的桌面控制台，提供图形化启停、切服、初始化与资源管理"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -11,6 +16,12 @@ dependencies = [
     "pyside6>=6.12.0",
     "pyside6-fluent-widgets>=1.11.3",
 ]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "app.__version__" }
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"
@@ -26,4 +37,5 @@ ignore = [
 [dependency-groups]
 dev = [
     "ruff>=0.17.4",
+    "pyinstaller>=6.22.3",
 ]
